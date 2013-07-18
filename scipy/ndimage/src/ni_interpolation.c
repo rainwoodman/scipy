@@ -140,7 +140,7 @@ map_coordinate(double in, npy_intp len, int mode)
             if (len <= 1) {
                 in = 0;
             } else {
-                npy_intp sz = len - 1;
+                npy_intp sz = len;
                 // Integer division of -in/sz gives (-in mod sz)
                 // Note that 'in' is negative
                 in += sz * ((npy_intp)(-in / sz) + 1);
@@ -153,7 +153,7 @@ map_coordinate(double in, npy_intp len, int mode)
             in = -1;
             break;
         }
-    } else if (in > len-1) {
+    } else if (in >= len) {
         switch (mode) {
         case NI_EXTEND_MIRROR:
             if (len <= 1) {
@@ -179,7 +179,7 @@ map_coordinate(double in, npy_intp len, int mode)
             if (len <= 1) {
                 in = 0;
             } else {
-                npy_intp sz = len - 1;
+                npy_intp sz = len;
                 in -= sz * (npy_intp)(in / sz);
             }
             break;

@@ -1313,10 +1313,10 @@ class TestNdimage:
             return (x[0] + 0.5,)
 
         data = numpy.array([1,2,3,4.])
-        expected = {'constant': [1.5,2.5,3.5,-1,-1,-1,-1],
-                    'wrap': [1.5,2.5,3.5,1.5,2.5,3.5,1.5],
+        expected = {'constant': [1.5,2.5,3.5,3.5,-1,-1,-1],
+                    'wrap': [1.5,2.5,3.5,3.5,1.5,2.5,3.5],
                     'mirror': [1.5,2.5,3.5,3.5,2.5,1.5,1.5],
-                    'nearest': [1.5,2.5,3.5,4,4,4,4]}
+                    'nearest': [1.5,2.5,3.5,3.5,4,4,4]}
 
         for mode in expected:
             assert_array_equal(expected[mode],
@@ -1332,7 +1332,7 @@ class TestNdimage:
 
         data = numpy.array([1,2,3,4])
         expected = {'constant': [-1,1,2,3],
-                    'wrap': [3,1,2,3],
+                    'wrap': [4,1,2,3],
                     'mirror': [2,1,2,3],
                     'nearest': [1,1,2,3]}
 
@@ -1935,7 +1935,7 @@ class TestNdimage:
         for order in range(0, 6):
             out = ndimage.affine_transform(data, [[0.5]],
                                           output_shape=(4,), order=order)
-            assert_array_almost_equal(out, [1, 1, 1, 0])
+            assert_array_almost_equal(out, [1, 1, 1, 1])
 
     def test_affine_transform11(self):
         "affine transform 11"
