@@ -3,10 +3,11 @@ from __future__ import division, print_function, absolute_import
 import warnings
 
 import numpy as np
-from numpy.testing import assert_almost_equal, assert_equal, run_module_suite
+from numpy.testing import assert_almost_equal, assert_equal, run_module_suite, \
+    assert_raises
 
 from scipy.signal.ltisys import ss2tf, lsim2, impulse2, step2, lti, bode, \
-    freqresp
+    freqresp, impulse, step, abcd_normalize
 from scipy.signal.filter_design import BadCoefficients
 import scipy.linalg as linalg
 
@@ -19,10 +20,7 @@ class TestSS2TF:
               np.zeros((r, q)), 0)
 
     def test_basic(self):
-        for p, q, r in [
-            (3, 3, 3),
-            (1, 3, 3),
-            (1, 1, 1)]:
+        for p, q, r in [(3, 3, 3), (1, 3, 3), (1, 1, 1)]:
             yield self.tst_matrix_shapes, p, q, r
 
 
@@ -101,116 +99,149 @@ class Test_lsim2(object):
         assert_almost_equal(x[:,0], expected_x)
 
 
-class Test_impulse2(object):
+class _TestImpulseFuncs(object):
+    # Common tests for impulse/impulse2 (= self.func)
 
     def test_01(self):
         # First order system: x'(t) + x(t) = u(t)
         # Exact impulse response is x(t) = exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = impulse2(system)
+        tout, y = self.func(system)
         expected_y = np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
     def test_02(self):
-        """Specify the desired time values for the output."""
+        # Specify the desired time values for the output.
 
         # First order system: x'(t) + x(t) = u(t)
         # Exact impulse response is x(t) = exp(-t).
         system = ([1.0],[1.0,1.0])
         n = 21
         t = np.linspace(0, 2.0, n)
-        tout, y = impulse2(system, T=t)
+        tout, y = self.func(system, T=t)
         assert_equal(tout.shape, (n,))
         assert_almost_equal(tout, t)
         expected_y = np.exp(-t)
         assert_almost_equal(y, expected_y)
 
     def test_03(self):
-        """Specify an initial condition as a scalar."""
+        # Specify an initial condition as a scalar.
 
         # First order system: x'(t) + x(t) = u(t), x(0)=3.0
         # Exact impulse response is x(t) = 4*exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = impulse2(system, X0=3.0)
+        tout, y = self.func(system, X0=3.0)
         expected_y = 4.0*np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
     def test_04(self):
-        """Specify an initial condition as a list."""
+        # Specify an initial condition as a list.
 
         # First order system: x'(t) + x(t) = u(t), x(0)=3.0
         # Exact impulse response is x(t) = 4*exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = impulse2(system, X0=[3.0])
+        tout, y = self.func(system, X0=[3.0])
         expected_y = 4.0*np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
     def test_05(self):
         # Simple integrator: x'(t) = u(t)
         system = ([1.0],[1.0,0.0])
-        tout, y = impulse2(system)
+        tout, y = self.func(system)
         expected_y = np.ones_like(tout)
         assert_almost_equal(y, expected_y)
+
+    def test_array_like(self):
+        # Test that function can accept sequences, scalars.
+        system = ([1.0], [1.0, 2.0, 1.0])
+        # TODO: add meaningful test where X0 is a list
+        tout, y = self.func(system, X0=[3], T=[5, 6])
+        tout, y = self.func(system, X0=[3], T=[5])
+
+
+class TestImpulse2(_TestImpulseFuncs):
+    def setup(self):
+        self.func = impulse2
+
+    def test_array_like2(self):
+        system = ([1.0], [1.0, 2.0, 1.0])
+        tout, y = self.func(system, X0=3, T=5)
 
     def test_06(self):
         # Second order system with a repeated root:
         #     x''(t) + 2*x(t) + x(t) = u(t)
         # The exact impulse response is t*exp(-t).
+        # Doesn't pass for `impulse` (on some systems, see gh-2654)
         system = ([1.0], [1.0, 2.0, 1.0])
-        tout, y = impulse2(system)
+        tout, y = self.func(system)
         expected_y = tout * np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
 
-class Test_step2(object):
+class TestImpulse(_TestImpulseFuncs):
+    def setup(self):
+        self.func = impulse
 
+
+class _TestStepFuncs(object):
     def test_01(self):
         # First order system: x'(t) + x(t) = u(t)
         # Exact step response is x(t) = 1 - exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = step2(system)
+        tout, y = self.func(system)
         expected_y = 1.0 - np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
     def test_02(self):
-        """Specify the desired time values for the output."""
+        # Specify the desired time values for the output.
 
         # First order system: x'(t) + x(t) = u(t)
         # Exact step response is x(t) = 1 - exp(-t).
         system = ([1.0],[1.0,1.0])
         n = 21
         t = np.linspace(0, 2.0, n)
-        tout, y = step2(system, T=t)
+        tout, y = self.func(system, T=t)
         assert_equal(tout.shape, (n,))
         assert_almost_equal(tout, t)
         expected_y = 1 - np.exp(-t)
         assert_almost_equal(y, expected_y)
 
     def test_03(self):
-        """Specify an initial condition as a scalar."""
+        # Specify an initial condition as a scalar.
 
         # First order system: x'(t) + x(t) = u(t), x(0)=3.0
         # Exact step response is x(t) = 1 + 2*exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = step2(system, X0=3.0)
+        tout, y = self.func(system, X0=3.0)
         expected_y = 1 + 2.0*np.exp(-tout)
         assert_almost_equal(y, expected_y)
 
     def test_04(self):
-        """Specify an initial condition as a list."""
+        # Specify an initial condition as a list.
 
         # First order system: x'(t) + x(t) = u(t), x(0)=3.0
         # Exact step response is x(t) = 1 + 2*exp(-t).
         system = ([1.0],[1.0,1.0])
-        tout, y = step2(system, X0=[3.0])
+        tout, y = self.func(system, X0=[3.0])
         expected_y = 1 + 2.0*np.exp(-tout)
         assert_almost_equal(y, expected_y)
+
+    def test_array_like(self):
+        # Test that function can accept sequences, scalars.
+        system = ([1.0], [1.0, 2.0, 1.0])
+        # TODO: add meaningful test where X0 is a list
+        tout, y = self.func(system, T=[5, 6])
+
+
+class TestStep2(_TestStepFuncs):
+    def setup(self):
+        self.func = step2
 
     def test_05(self):
         # Simple integrator: x'(t) = u(t)
         # Exact step response is x(t) = t.
         system = ([1.0],[1.0,0.0])
-        tout, y = step2(system, atol=1e-10, rtol=1e-8)
+        tout, y = self.func(system, atol=1e-10, rtol=1e-8)
         expected_y = tout
         assert_almost_equal(y, expected_y)
 
@@ -219,9 +250,20 @@ class Test_step2(object):
         #     x''(t) + 2*x(t) + x(t) = u(t)
         # The exact step response is 1 - (1 + t)*exp(-t).
         system = ([1.0], [1.0, 2.0, 1.0])
-        tout, y = step2(system, atol=1e-10, rtol=1e-8)
+        tout, y = self.func(system, atol=1e-10, rtol=1e-8)
         expected_y = 1 - (1 + tout) * np.exp(-tout)
         assert_almost_equal(y, expected_y)
+
+
+class TestStep(_TestStepFuncs):
+    def setup(self):
+        self.func = step
+
+    def test_complex_input(self):
+        # Test that complex input doesn't raise an error.
+        # `step` doesn't seem to have been designed for complex input, but this
+        # works and may be used, so add regression test.  See gh-2654.
+        step(([], [-1], 1+0j))
 
 
 def test_lti_instantiation():
@@ -230,6 +272,140 @@ def test_lti_instantiation():
     s = lti(np.array([]), np.array([-1]), 1)
     s = lti([], [-1], 1)
     s = lti([1], [-1], 1, 3)
+
+
+class Test_abcd_normalize(object):
+    def setup(self):
+        self.A = np.array([[1.0, 2.0], [3.0, 4.0]])
+        self.B = np.array([[-1.0], [5.0]])
+        self.C = np.array([[4.0, 5.0]])
+        self.D = np.array([[2.5]])
+
+    def test_no_matrix_fails(self):
+        assert_raises(ValueError, abcd_normalize)
+
+    def test_A_nosquare_fails(self):
+        assert_raises(ValueError, abcd_normalize, [1, -1],
+                      self.B, self.C, self.D)
+
+    def test_AB_mismatch_fails(self):
+        assert_raises(ValueError, abcd_normalize, self.A, [-1, 5],
+                      self.C, self.D)
+
+    def test_AC_mismatch_fails(self):
+        assert_raises(ValueError, abcd_normalize, self.A, self.B,
+                      [[4.0], [5.0]], self.D)
+
+    def test_CD_mismatch_fails(self):
+        assert_raises(ValueError, abcd_normalize, self.A, self.B,
+                      self.C, [2.5, 0])
+
+    def test_BD_mismatch_fails(self):
+        assert_raises(ValueError, abcd_normalize, self.A, [-1, 5],
+                      self.C, self.D)
+
+    def test_normalized_matrices_unchanged(self):
+        A, B, C, D = abcd_normalize(self.A, self.B, self.C, self.D)
+        assert_equal(A, self.A)
+        assert_equal(B, self.B)
+        assert_equal(C, self.C)
+        assert_equal(D, self.D)
+
+    def test_shapes(self):
+        A, B, C, D = abcd_normalize(self.A, self.B, [1, 0], 0)
+        assert_equal(A.shape[0], A.shape[1])
+        assert_equal(A.shape[0], B.shape[0])
+        assert_equal(A.shape[0], C.shape[1])
+        assert_equal(C.shape[0], D.shape[0])
+        assert_equal(B.shape[1], D.shape[1])
+
+    def test_zero_dimension_is_not_none1(self):
+        B_ = np.zeros((2, 0))
+        D_ = np.zeros((0, 0))
+        A, B, C, D = abcd_normalize(A=self.A, B=B_, D=D_)
+        assert_equal(A, self.A)
+        assert_equal(B, B_)
+        assert_equal(D, D_)
+        assert_equal(C.shape[0], D_.shape[0])
+        assert_equal(C.shape[1], self.A.shape[0])
+
+    def test_zero_dimension_is_not_none2(self):
+        B_ = np.zeros((2, 0))
+        C_ = np.zeros((0, 2))
+        A, B, C, D = abcd_normalize(A=self.A, B=B_, C=C_)
+        assert_equal(A, self.A)
+        assert_equal(B, B_)
+        assert_equal(C, C_)
+        assert_equal(D.shape[0], C_.shape[0])
+        assert_equal(D.shape[1], B_.shape[1])
+
+    def test_missing_A(self):
+        A, B, C, D = abcd_normalize(B=self.B, C=self.C, D=self.D)
+        assert_equal(A.shape[0], A.shape[1])
+        assert_equal(A.shape[0], B.shape[0])
+        assert_equal(A.shape, (self.B.shape[0], self.B.shape[0]))
+
+    def test_missing_B(self):
+        A, B, C, D = abcd_normalize(A=self.A, C=self.C, D=self.D)
+        assert_equal(B.shape[0], A.shape[0])
+        assert_equal(B.shape[1], D.shape[1])
+        assert_equal(B.shape, (self.A.shape[0], self.D.shape[1]))
+
+    def test_missing_C(self):
+        A, B, C, D = abcd_normalize(A=self.A, B=self.B, D=self.D)
+        assert_equal(C.shape[0], D.shape[0])
+        assert_equal(C.shape[1], A.shape[0])
+        assert_equal(C.shape, (self.D.shape[0], self.A.shape[0]))
+
+    def test_missing_D(self):
+        A, B, C, D = abcd_normalize(A=self.A, B=self.B, C=self.C)
+        assert_equal(D.shape[0], C.shape[0])
+        assert_equal(D.shape[1], B.shape[1])
+        assert_equal(D.shape, (self.C.shape[0], self.B.shape[1]))
+
+    def test_missing_AB(self):
+        A, B, C, D = abcd_normalize(C=self.C, D=self.D)
+        assert_equal(A.shape[0], A.shape[1])
+        assert_equal(A.shape[0], B.shape[0])
+        assert_equal(B.shape[1], D.shape[1])
+        assert_equal(A.shape, (self.C.shape[1], self.C.shape[1]))
+        assert_equal(B.shape, (self.C.shape[1], self.D.shape[1]))
+
+    def test_missing_AC(self):
+        A, B, C, D = abcd_normalize(B=self.B, D=self.D)
+        assert_equal(A.shape[0], A.shape[1])
+        assert_equal(A.shape[0], B.shape[0])
+        assert_equal(C.shape[0], D.shape[0])
+        assert_equal(C.shape[1], A.shape[0])
+        assert_equal(A.shape, (self.B.shape[0], self.B.shape[0]))
+        assert_equal(C.shape, (self.D.shape[0], self.B.shape[0]))
+
+    def test_missing_AD(self):
+        A, B, C, D = abcd_normalize(B=self.B, C=self.C)
+        assert_equal(A.shape[0], A.shape[1])
+        assert_equal(A.shape[0], B.shape[0])
+        assert_equal(D.shape[0], C.shape[0])
+        assert_equal(D.shape[1], B.shape[1])
+        assert_equal(A.shape, (self.B.shape[0], self.B.shape[0]))
+        assert_equal(D.shape, (self.C.shape[0], self.B.shape[1]))
+
+    def test_missing_BC(self):
+        A, B, C, D = abcd_normalize(A=self.A, D=self.D)
+        assert_equal(B.shape[0], A.shape[0])
+        assert_equal(B.shape[1], D.shape[1])
+        assert_equal(C.shape[0], D.shape[0])
+        assert_equal(C.shape[1], A.shape[0])
+        assert_equal(B.shape, (self.A.shape[0], self.D.shape[1]))
+        assert_equal(C.shape, (self.D.shape[0], self.A.shape[0]))
+
+    def test_missing_ABC_fails(self):
+        assert_raises(ValueError, abcd_normalize, D=self.D)
+
+    def test_missing_BD_fails(self):
+        assert_raises(ValueError, abcd_normalize, A=self.A, C=self.C)
+
+    def test_missing_CD_fails(self):
+        assert_raises(ValueError, abcd_normalize, A=self.A, B=self.B)
 
 
 class Test_bode(object):
@@ -304,6 +480,12 @@ class Test_bode(object):
         # The test passes if bode doesn't raise an exception.
         system = lti([1], [1, 0, 100])
         w, mag, phase = bode(system, n=2)
+
+    def test_08(self):
+        """Test that bode() return continuous phase, issues/2331."""
+        system = lti([], [-10, -30, -40, -60, -70], 1)
+        w, mag, phase = system.bode(w=np.logspace(-3, 40, 100))
+        assert_almost_equal(min(phase), -450, decimal=15)
 
     def test_from_state_space(self):
         # Ensure that bode works with a system that was created from the

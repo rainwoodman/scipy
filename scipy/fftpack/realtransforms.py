@@ -22,7 +22,7 @@ atexit.register(_fftpack.destroy_dst1_cache)
 atexit.register(_fftpack.destroy_dst2_cache)
 
 
-def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
+def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=False):
     """
     Return the Discrete Cosine Transform of arbitrary type sequence x.
 
@@ -48,7 +48,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     See Also
     --------
-    idct
+    idct : Inverse DCT
 
     Notes
     -----
@@ -59,7 +59,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     implemented in scipy. 'The' DCT generally refers to DCT type 2, and 'the'
     Inverse DCT generally refers to DCT type 3.
 
-    **type I**
+    **Type I**
 
     There are several definitions of the DCT-I; we use the following
     (for ``norm=None``)::
@@ -71,7 +71,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     Only None is supported as normalization mode for DCT-I. Note also that the
     DCT-I is only supported for input size > 1
 
-    **type II**
+    **Type II**
 
     There are several definitions of the DCT-II; we use the following
     (for ``norm=None``)::
@@ -89,7 +89,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     Which makes the corresponding matrix of coefficients orthonormal
     (``OO' = Id``).
 
-    **type III**
+    **Type III**
 
     There are several definitions, we use the following
     (for ``norm=None``)::
@@ -101,7 +101,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     or, for ``norm='ortho'`` and 0 <= k < N::
 
                                           N-1
-      y[k] = x[0] / sqrt(N) + sqrt(1/N) * sum x[n]*cos(pi*(k+0.5)*n/N)
+      y[k] = x[0] / sqrt(N) + sqrt(2/N) * sum x[n]*cos(pi*(k+0.5)*n/N)
                                           n=1
 
     The (unnormalized) DCT-III is the inverse of the (unnormalized) DCT-II, up
@@ -110,11 +110,23 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     References
     ----------
-    http://en.wikipedia.org/wiki/Discrete_cosine_transform
+    .. [1] 'A Fast Cosine Transform in One and Two Dimensions', by J.
+           Makhoul, `IEEE Transactions on acoustics, speech and signal
+           processing` vol. 28(1), pp. 27-34,
+           http://dx.doi.org/10.1109/TASSP.1980.1163351 (1980).
+    .. [2] Wikipedia, "Discrete cosine transform",
+           http://en.wikipedia.org/wiki/Discrete_cosine_transform
 
-    'A Fast Cosine Transform in One and Two Dimensions', by J. Makhoul, `IEEE
-    Transactions on acoustics, speech and signal processing` vol. 28(1),
-    pp. 27-34, http://dx.doi.org/10.1109/TASSP.1980.1163351 (1980).
+    Examples
+    --------
+    The Type 1 DCT is equivalent to the FFT (though faster) for real,
+    even-symmetrical inputs.  The output is also real and even-symmetrical.
+    Half of the FFT input is used to generate half of the FFT output:
+
+    >>> fft(array([4., 3., 5., 10., 5., 3.])).real
+    array([ 30.,  -8.,   6.,  -2.,   6.,  -8.])
+    >>> dct(array([4., 3., 5., 10.]), 1)
+    array([ 30.,  -8.,   6.,  -2.])
 
     """
     if type == 1 and norm is not None:
@@ -123,7 +135,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     return _dct(x, type, n, axis, normalize=norm, overwrite_x=overwrite_x)
 
 
-def idct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
+def idct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=False):
     """
     Return the Inverse Discrete Cosine Transform of an arbitrary type sequence.
 
@@ -149,7 +161,7 @@ def idct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     See Also
     --------
-    dct
+    dct : Forward DCT
 
     Notes
     -----
@@ -162,6 +174,17 @@ def idct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     3, and IDCT of type 3 is the DCT of type 2. For the definition of these
     types, see `dct`.
 
+    Examples
+    --------
+    The Type 1 DCT is equivalent to the DFT for real, even-symmetrical
+    inputs.  The output is also real and even-symmetrical.  Half of the IFFT
+    input is used to generate half of the IFFT output:
+
+    >>> ifft(array([ 30.,  -8.,   6.,  -2.,   6.,  -8.])).real
+    array([  4.,   3.,   5.,  10.,   5.,   3.])
+    >>> idct(array([ 30.,  -8.,   6.,  -2.]), 1) / 6
+    array([  4.,   3.,   5.,  10.])
+
     """
     if type == 1 and norm is not None:
         raise NotImplementedError(
@@ -171,7 +194,7 @@ def idct(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     return _dct(x, _TP[type], n, axis, normalize=norm, overwrite_x=overwrite_x)
 
 
-def _dct(x, type, n=None, axis=-1, overwrite_x=0, normalize=None):
+def _dct(x, type, n=None, axis=-1, overwrite_x=False, normalize=None):
     """
     Return Discrete Cosine Transform of arbitrary type sequence x.
 
@@ -198,7 +221,7 @@ def _dct(x, type, n=None, axis=-1, overwrite_x=0, normalize=None):
     if n is None:
         n = tmp.shape[axis]
     else:
-        raise NotImplemented("Padding/truncating not yet implemented")
+        raise NotImplementedError("Padding/truncating not yet implemented")
 
     if tmp.dtype == np.double:
         if type == 1:
@@ -246,7 +269,7 @@ def _dct(x, type, n=None, axis=-1, overwrite_x=0, normalize=None):
 
 ###########
 
-def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
+def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=False):
     """
     Return the Discrete Sine Transform of arbitrary type sequence x.
 
@@ -274,7 +297,7 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     See Also
     --------
-    idst
+    idst : Inverse DST
 
     Notes
     -----
@@ -284,7 +307,7 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     even/odd boundary conditions and boundary off sets [1]_, only the first
     3 types are implemented in scipy.
 
-    **type I**
+    **Type I**
 
     There are several definitions of the DST-I; we use the following
     for ``norm=None``.  DST-I assumes the input is odd around n=-1 and n=N. ::
@@ -297,10 +320,11 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     DCT-I is only supported for input size > 1
     The (unnormalized) DCT-I is its own inverse, up to a factor `2(N+1)`.
 
-    **type II**
+    **Type II**
 
-    There are several definitions of the DST-I; we use the following
-    for ``norm=None``.  DST-I assumes the input is odd around n=-1 and n=N. ::
+    There are several definitions of the DST-II; we use the following
+    for ``norm=None``.  DST-II assumes the input is odd around n=-1/2 and
+    n=N-1/2; the output is odd around k=-1 and even around k=N-1 ::
 
                 N-1
       y[k] = 2* sum x[n]*sin(pi*(k+1)*(n+0.5)/N), 0 <= k < N.
@@ -311,7 +335,7 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
         f = sqrt(1/(4*N)) if k == 0
         f = sqrt(1/(2*N)) otherwise.
 
-    **type III**
+    **Type III**
 
     There are several definitions of the DST-III, we use the following
     (for ``norm=None``).  DST-III assumes the input is odd around n=-1
@@ -327,7 +351,8 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     References
     ----------
-    .. [1] http://en.wikipedia.org/wiki/Discrete_sine_transform
+    .. [1] Wikipedia, "Discrete sine transform",
+           http://en.wikipedia.org/wiki/Discrete_sine_transform
 
     """
     if type == 1 and norm is not None:
@@ -336,7 +361,7 @@ def dst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     return _dst(x, type, n, axis, normalize=norm, overwrite_x=overwrite_x)
 
 
-def idst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
+def idst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=False):
     """
     Return the Inverse Discrete Sine Transform of an arbitrary type sequence.
 
@@ -364,7 +389,7 @@ def idst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
 
     See Also
     --------
-    dst
+    dst : Forward DST
 
     Notes
     -----
@@ -383,7 +408,7 @@ def idst(x, type=2, n=None, axis=-1, norm=None, overwrite_x=0):
     return _dst(x, _TP[type], n, axis, normalize=norm, overwrite_x=overwrite_x)
 
 
-def _dst(x, type, n=None, axis=-1, overwrite_x=0, normalize=None):
+def _dst(x, type, n=None, axis=-1, overwrite_x=False, normalize=None):
     """
     Return Discrete Sine Transform of arbitrary type sequence x.
 
@@ -410,7 +435,7 @@ def _dst(x, type, n=None, axis=-1, overwrite_x=0, normalize=None):
     if n is None:
         n = tmp.shape[axis]
     else:
-        raise NotImplemented("Padding/truncating not yet implemented")
+        raise NotImplementedError("Padding/truncating not yet implemented")
 
     if tmp.dtype == np.double:
         if type == 1:

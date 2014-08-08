@@ -3,8 +3,7 @@ HookFile: bscript
 Library:
     Extension: _fblas
         Sources:
-            fblas.pyf.src,
-            src/fblaswrap.f
+            fblas.pyf.src
     Extension: _cblas
         Sources:
             cblas.pyf.src
@@ -20,3 +19,7 @@ Library:
     Extension: calc_lwork
         Sources:
             src/calc_lwork.f
+    Extension: _interpolative
+        Sources:
+             interpolative.pyf,
+             src/id_dist/src/*.f

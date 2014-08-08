@@ -56,19 +56,6 @@ from scipy.sparse.linalg import gmres, splu
 from scipy.linalg.lapack import get_lapack_funcs
 
 
-def _single_precision_cast(typechar):
-    # This check is required, for now, because we have unresolved crashes
-    # occurring in single precision Veclib routines, on at least 64-bit OSX
-    # and some Linux systems.  When these crashes are resolved, this
-    # restriction can be removed.
-    if typechar in ('f', 'F'):
-        warnings.warn("Single-precision types in `eigs` and `eighs` "
-                      "are not supported currently. "
-                      "Double precision routines are used instead.")
-        return {'f': 'd', 'F': 'D'}[typechar]
-    return typechar
-
-
 _type_conv = {'f': 's', 'd': 'd', 'F': 'c', 'D': 'z'}
 _ndigits = {'f': 5, 'd': 12, 'F': 5, 'D': 12}
 
@@ -93,9 +80,9 @@ DNAUPD_ERRORS = {
     -8: "Error return from LAPACK eigenvalue calculation;",
     -9: "Starting vector is zero.",
     -10: "IPARAM(7) must be 1,2,3,4.",
-    -11: "IPARAM(7) = 1 and BMAT = 'G' are incompatable.",
+    -11: "IPARAM(7) = 1 and BMAT = 'G' are incompatible.",
     -12: "IPARAM(1) must be equal to 0 or 1.",
-    -13: "NEV and WHICH = 'BE' are incompatable.",
+    -13: "NEV and WHICH = 'BE' are incompatible.",
     -9999: "Could not build an Arnoldi factorization. "
            "IPARAM(5) returns the size of the current Arnoldi "
            "factorization. The user is advised to check that "
@@ -130,9 +117,9 @@ DSAUPD_ERRORS = {
         "Informational error from LAPACK routine dsteqr .",
     -9: "Starting vector is zero.",
     -10: "IPARAM(7) must be 1,2,3,4,5.",
-    -11: "IPARAM(7) = 1 and BMAT = 'G' are incompatable.",
+    -11: "IPARAM(7) = 1 and BMAT = 'G' are incompatible.",
     -12: "IPARAM(1) must be equal to 0 or 1.",
-    -13: "NEV and WHICH = 'BE' are incompatable. ",
+    -13: "NEV and WHICH = 'BE' are incompatible. ",
     -9999: "Could not build an Arnoldi factorization. "
            "IPARAM(5) returns the size of the current Arnoldi "
            "factorization. The user is advised to check that "
@@ -327,8 +314,6 @@ class _ArpackParams(object):
         if tp not in 'fdFD':
             raise ValueError("matrix type must be 'f', 'd', 'F', or 'D'")
 
-        tp = _single_precision_cast(tp)
-
         if v0 is not None:
             # ARPACK overwrites its initial resid,  make a copy
             self.resid = np.array(v0, copy=True)
@@ -515,7 +500,7 @@ class _SymmetricArpackParams(_ArpackParams):
             raise ValueError("which must be one of %s"
                              % ' '.join(_SEUPD_WHICH))
         if k >= n:
-            raise ValueError("k must be less than rank(A), k=%d" % k)
+            raise ValueError("k must be less than ndim(A), k=%d" % k)
 
         _ArpackParams.__init__(self, n, k, tp, mode, sigma,
                                ncv, v0, maxiter, which, tol)
@@ -697,7 +682,7 @@ class _UnsymmetricArpackParams(_ArpackParams):
             raise ValueError("Parameter which must be one of %s"
                              % ' '.join(_NEUPD_WHICH))
         if k >= n - 1:
-            raise ValueError("k must be less than rank(A)-1, k=%d" % k)
+            raise ValueError("k must be less than ndim(A)-1, k=%d" % k)
 
         _ArpackParams.__init__(self, n, k, tp, mode, sigma,
                                ncv, v0, maxiter, which, tol)
@@ -1032,7 +1017,7 @@ def get_OPinv_matvec(A, M, sigma, symmetric=False, tol=0):
         #M is the identity matrix
         if isdense(A):
             if (np.issubdtype(A.dtype, np.complexfloating)
-                or np.imag(sigma) == 0):
+                    or np.imag(sigma) == 0):
                 A = np.copy(A)
             else:
                 A = A + 0j
@@ -1048,7 +1033,7 @@ def get_OPinv_matvec(A, M, sigma, symmetric=False, tol=0):
                               M, sigma, tol=tol).matvec
     else:
         if ((not isdense(A) and not isspmatrix(A)) or
-            (not isdense(M) and not isspmatrix(M))):
+                (not isdense(M) and not isspmatrix(M))):
             return IterOpInv(_aslinearoperator_with_dtype(A),
                               _aslinearoperator_with_dtype(M),
                               sigma, tol=tol).matvec
@@ -1221,7 +1206,7 @@ def eigs(A, k=6, M=None, sigma=None, which='LM', v0=None,
     n = A.shape[0]
 
     if k <= 0 or k >= n:
-        raise ValueError("k=%d must be between 1 and rank(A)-1=%d"
+        raise ValueError("k=%d must be between 1 and ndim(A)-1=%d"
                          % (k, n - 1))
 
     if sigma is None:
@@ -1320,8 +1305,8 @@ def eigsh(A, k=6, M=None, sigma=None, which='LM', v0=None,
     w : array
         Array of k eigenvalues
     v : array
-       An array of k eigenvectors
-       The v[i] is the eigenvector corresponding to the eigenvector w[i]
+        An array representing the `k` eigenvectors.  The column ``v[:, i]`` is
+        the eigenvector corresponding to the eigenvalue ``w[i]``.
 
     Other Parameters
     ----------------
@@ -1499,7 +1484,7 @@ def eigsh(A, k=6, M=None, sigma=None, which='LM', v0=None,
     n = A.shape[0]
 
     if k <= 0 or k >= n:
-        raise ValueError("k must be between 1 and rank(A)-1")
+        raise ValueError("k must be between 1 and ndim(A)-1")
 
     if sigma is None:
         A = _aslinearoperator_with_dtype(A)

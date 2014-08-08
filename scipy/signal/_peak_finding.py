@@ -5,10 +5,12 @@ from __future__ import division, print_function, absolute_import
 
 import numpy as np
 
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 from scipy.signal.wavelets import cwt, ricker
 from scipy.stats import scoreatpercentile
 
+
+__all__ = ['argrelmin', 'argrelmax', 'argrelextrema', 'find_peaks_cwt']
 
 def _boolrelextrema(data, comparator,
                   axis=0, order=1, mode='clip'):
@@ -38,8 +40,8 @@ def _boolrelextrema(data, comparator,
     Returns
     -------
     extrema : ndarray
-        Indices of the extrema, as boolean array of same shape as data.
-        True for an extrema, False else.
+        Boolean array of the same shape as `data` that is True at an extrema,
+        False otherwise.
 
     See also
     --------
@@ -48,7 +50,7 @@ def _boolrelextrema(data, comparator,
     Examples
     --------
     >>> testdata = np.array([1,2,3,2,1])
-    >>> argrelextrema(testdata, np.greater, axis=0)
+    >>> _boolrelextrema(testdata, np.greater, axis=0)
     array([False, False,  True, False, False], dtype=bool)
 
     """
@@ -93,16 +95,30 @@ def argrelmin(data, axis=0, order=1, mode='clip'):
 
     Returns
     -------
-    extrema : ndarray
-        Indices of the minima, as an array of integers.
+    extrema : tuple of ndarrays
+        Indices of the minima in arrays of integers.  ``extrema[k]`` is
+        the array of indices of axis `k` of `data`.  Note that the
+        return value is a tuple even when `data` is one-dimensional.
 
-    See also
+    See Also
     --------
     argrelextrema, argrelmax
 
     Notes
     -----
     This function uses `argrelextrema` with np.less as comparator.
+
+    Examples
+    --------
+    >>> x = np.array([2, 1, 2, 3, 2, 0, 1, 0])
+    >>> argrelmin(x)
+    (array([1, 5]),)
+    >>> y = np.array([[1, 2, 1, 2],
+    ...               [2, 2, 0, 0],
+    ...               [5, 3, 4, 4]])
+    ...
+    >>> argrelmin(y, axis=1)
+    (array([0, 2]), array([2, 1]))
 
     """
     return argrelextrema(data, np.less, axis, order, mode)
@@ -131,10 +147,12 @@ def argrelmax(data, axis=0, order=1, mode='clip'):
 
     Returns
     -------
-    extrema : ndarray
-        Indices of the maxima, as an array of integers.
+    extrema : tuple of ndarrays
+        Indices of the maxima in arrays of integers.  ``extrema[k]`` is
+        the array of indices of axis `k` of `data`.  Note that the
+        return value is a tuple even when `data` is one-dimensional.
 
-    See also
+    See Also
     --------
     argrelextrema, argrelmin
 
@@ -142,6 +160,17 @@ def argrelmax(data, axis=0, order=1, mode='clip'):
     -----
     This function uses `argrelextrema` with np.greater as comparator.
 
+    Examples
+    --------
+    >>> x = np.array([2, 1, 2, 3, 2, 0, 1, 0])
+    >>> argrelmax(x)
+    (array([3, 6]),)
+    >>> y = np.array([[1, 2, 1, 2],
+    ...               [2, 2, 0, 0],
+    ...               [5, 3, 4, 4]])
+    ...
+    >>> argrelmax(y, axis=1)
+    (array([0]), array([1]))
     """
     return argrelextrema(data, np.greater, axis, order, mode)
 
@@ -171,21 +200,31 @@ def argrelextrema(data, comparator, axis=0, order=1, mode='clip'):
 
     Returns
     -------
-    extrema : ndarray
-        Indices of the extrema, as an array of integers (same format as
-        np.argmin, np.argmax).
+    extrema : tuple of ndarrays
+        Indices of the maxima in arrays of integers.  ``extrema[k]`` is
+        the array of indices of axis `k` of `data`.  Note that the
+        return value is a tuple even when `data` is one-dimensional.
 
-    See also
+    See Also
     --------
     argrelmin, argrelmax
+
+    Examples
+    --------
+    >>> x = np.array([2, 1, 2, 3, 2, 0, 1, 0])
+    >>> argrelextrema(x, np.greater)
+    (array([3, 6]),)
+    >>> y = np.array([[1, 2, 1, 2],
+    ...               [2, 2, 0, 0],
+    ...               [5, 3, 4, 4]])
+    ...
+    >>> argrelextrema(y, np.less, axis=1)
+    (array([0, 2]), array([2, 1]))
 
     """
     results = _boolrelextrema(data, comparator,
                               axis, order, mode)
-    if ~results.any():
-        return (np.array([]),) * 2
-    else:
-        return np.where(results)
+    return np.where(results)
 
 
 def _identify_ridge_lines(matr, max_distances, gap_thresh):
@@ -226,11 +265,11 @@ def _identify_ridge_lines(matr, max_distances, gap_thresh):
     Examples
     --------
     >>> data = np.random.rand(5,5)
-    >>> ridge_lines = identify_ridge_lines(data, 1, 1)
+    >>> ridge_lines = _identify_ridge_lines(data, 1, 1)
 
     Notes
     -----
-    This function is intended to be used in conjuction with `cwt`
+    This function is intended to be used in conjunction with `cwt`
     as part of `find_peaks_cwt`.
 
     """
@@ -349,15 +388,18 @@ def _filter_ridge_lines(cwt, ridge_lines, window_size=None, min_length=None,
         min_length = np.ceil(cwt.shape[0] / 4)
     if window_size is None:
         window_size = np.ceil(num_points / 20)
-    hf_window = window_size / 2
+
+    window_size = int(window_size)
+    hf_window, odd = divmod(window_size, 2)
 
     #Filter based on SNR
     row_one = cwt[0, :]
     noises = np.zeros_like(row_one)
     for ind, val in enumerate(row_one):
-        window = np.arange(max([ind - hf_window, 0]), min([ind + hf_window, num_points]))
-        window = window.astype(int)
-        noises[ind] = scoreatpercentile(row_one[window], per=noise_perc)
+        window_start = max(ind - hf_window, 0)
+        window_end = min(ind + hf_window + odd, num_points)
+        noises[ind] = scoreatpercentile(row_one[window_start:window_end],
+                                        per=noise_perc)
 
     def filt_func(line):
         if len(line[0]) < min_length:

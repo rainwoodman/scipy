@@ -5,9 +5,7 @@ Module for reading and writing matlab (TM) .mat files
 
 from __future__ import division, print_function, absolute_import
 
-import os
-import sys
-import warnings
+import numpy as np
 
 from scipy.lib.six import string_types
 
@@ -15,49 +13,7 @@ from .miobase import get_matfile_version, docfiller
 from .mio4 import MatFile4Reader, MatFile4Writer
 from .mio5 import MatFile5Reader, MatFile5Writer
 
-__all__ = ['find_mat_file', 'mat_reader_factory', 'loadmat', 'savemat',
-           'whosmat']
-
-
-@docfiller
-def find_mat_file(file_name, appendmat=True):
-    ''' Try to find .mat file on system path
-
-    Parameters
-    ----------
-    file_name : str
-       file name for mat file
-    %(append_arg)s
-
-    Returns
-    -------
-    full_name : string
-       possibly modified name after path search
-    '''
-    warnings.warn('Searching for mat files on python system path will be ' +
-                  'removed in next version of scipy',
-                   DeprecationWarning, stacklevel=2)
-    if appendmat and file_name.endswith(".mat"):
-        file_name = file_name[:-4]
-    if os.sep in file_name:
-        full_name = file_name
-        if appendmat:
-            full_name = file_name + ".mat"
-    else:
-        full_name = None
-        junk, file_name = os.path.split(file_name)
-        for path in [os.curdir] + list(sys.path):
-            test_name = os.path.join(path, file_name)
-            if appendmat:
-                test_name += ".mat"
-            try:
-                fid = open(test_name,'rb')
-                fid.close()
-                full_name = test_name
-                break
-            except IOError:
-                pass
-    return full_name
+__all__ = ['mat_reader_factory', 'loadmat', 'savemat', 'whosmat']
 
 
 def _open_file(file_like, appendmat):
@@ -65,19 +21,14 @@ def _open_file(file_like, appendmat):
     if isinstance(file_like, string_types):
         try:
             return open(file_like, 'rb')
-        except IOError:
-            pass
-        if appendmat and not file_like.endswith('.mat'):
-            try:
-                return open(file_like + '.mat', 'rb')
-            except IOError:
-                pass
-        # search the python path - we'll remove this soon
-        full_name = find_mat_file(file_like, appendmat)
-        if full_name is None:
-            raise IOError("%s not found on the path."
-                          % file_like)
-        return open(full_name, 'rb')
+        except IOError as e:
+            if appendmat and not file_like.endswith('.mat'):
+                file_like += '.mat'
+                try:
+                    return open(file_like, 'rb')
+                except IOError:
+                    pass  # Rethrow the original exception.
+            raise
     # not a string - maybe file-like object
     try:
         file_like.read(0)
@@ -151,6 +102,12 @@ def loadmat(file_name, mdict=None, appendmat=True, **kwargs):
        False replicates the behavior of scipy version 0.7.x (returning
        numpy object arrays).  The default setting is True, because it
        allows easier round-trip load and save of MATLAB files.
+    verify_compressed_data_integrity : bool, optional
+        Whether the length of compressed sequences in the MATLAB file
+        should be checked, to ensure that they are not longer than we expect.
+        It is advisable to enable this (the default) because overlong
+        compressed sequences in MATLAB files generally indicate that the
+        files have experienced some sort of corruption.
     variable_names : None or sequence
         If None (the default) - read all variables in file. Otherwise
         `variable_names` should be a sequence of strings, giving names of the
@@ -191,7 +148,7 @@ def savemat(file_name, mdict,
             format='5',
             long_field_names=False,
             do_compression=False,
-            oned_as=None):
+            oned_as='row'):
     """
     Save a dictionary of names and arrays into a MATLAB-style .mat file.
 
@@ -219,31 +176,14 @@ def savemat(file_name, mdict,
         which works for MATLAB 7.6+
     do_compression : bool, optional
         Whether or not to compress matrices on write.  Default is False.
-    oned_as : {'column', 'row', None}, optional
+    oned_as : {'row', 'column'}, optional
         If 'column', write 1-D numpy arrays as column vectors.
         If 'row', write 1-D numpy arrays as row vectors.
-        If None (the default), the behavior depends on the value of `format`
-        (see Notes below).
 
     See also
     --------
     mio4.MatFile4Writer
     mio5.MatFile5Writer
-
-    Notes
-    -----
-    If ``format == '4'``, `mio4.MatFile4Writer` is called, which sets
-    `oned_as` to 'row' if it had been None.  If ``format == '5'``,
-    `mio5.MatFile5Writer` is called, which sets `oned_as` to 'column' if
-    it had been None, but first it executes:
-
-    ``warnings.warn("Using oned_as default value ('column')" +``
-                  ``" This will change to 'row' in future versions",``
-                  ``FutureWarning, stacklevel=2)``
-
-    without being more specific as to precisely when the change will take
-    place.
-
     """
     file_is_string = isinstance(file_name, string_types)
     if file_is_string:
@@ -251,13 +191,10 @@ def savemat(file_name, mdict,
             file_name = file_name + ".mat"
         file_stream = open(file_name, 'wb')
     else:
-        try:
-            file_name.write(b'')
-        except AttributeError:
+        if not hasattr(file_name, 'write'):
             raise IOError('Writer needs file name or writeable '
                            'file-like object')
         file_stream = file_name
-
     if format == '4':
         if long_field_names:
             raise ValueError("Long field names are not available for version 4 files")

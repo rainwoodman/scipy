@@ -7,25 +7,28 @@ from __future__ import division, print_function, absolute_import
 import math
 import warnings
 
+import numpy as np
+from numpy import (isscalar, r_, log, sum, around, unique, asarray,
+     zeros, arange, sort, amin, amax, any, atleast_1d, sqrt, ceil,
+     floor, array, poly1d, compress, not_equal, pi, exp, ravel, angle)
+from numpy.testing.decorators import setastest
+
+from scipy.lib.six import string_types
+from scipy import optimize
+from scipy import special
 from . import statlib
 from . import stats
 from .stats import find_repeats
 from . import distributions
-from numpy import isscalar, r_, log, sum, around, unique, asarray
-from numpy import zeros, arange, sort, amin, amax, any, where, \
-     atleast_1d, sqrt, ceil, floor, array, poly1d, compress, not_equal, \
-     pi, exp, ravel, angle
-import numpy as np
-import scipy.optimize as optimize
-from numpy.testing.decorators import setastest
+from ._distn_infrastructure import rv_generic
 
 
 __all__ = ['mvsdist',
            'bayes_mvs', 'kstat', 'kstatvar', 'probplot', 'ppcc_max', 'ppcc_plot',
            'boxcox_llf', 'boxcox', 'boxcox_normmax', 'boxcox_normplot',
            'shapiro', 'anderson', 'ansari', 'bartlett', 'levene', 'binom_test',
-           'fligner', 'mood', 'oneway', 'wilcoxon',
-           'pdf_fromgamma', 'circmean', 'circvar', 'circstd',
+           'fligner', 'mood', 'wilcoxon',
+           'pdf_fromgamma', 'circmean', 'circvar', 'circstd', 'anderson_ksamp'
            ]
 
 
@@ -248,11 +251,54 @@ def kstatvar(data,n=2):
         raise ValueError("Only n=1 or n=2 supported.")
 
 
+def _calc_uniform_order_statistic_medians(x):
+    """See Notes section of `probplot` for details."""
+    N = len(x)
+    osm_uniform = np.zeros(N, dtype=np.float64)
+    osm_uniform[-1] = 0.5**(1.0 / N)
+    osm_uniform[0] = 1 - osm_uniform[-1]
+    i = np.arange(2, N)
+    osm_uniform[1:-1] = (i - 0.3175) / (N + 0.365)
+    return osm_uniform
+
+
+def _parse_dist_kw(dist, enforce_subclass=True):
+    """Parse `dist` keyword.
+
+    Parameters
+    ----------
+    dist : str or stats.distributions instance.
+        Several functions take `dist` as a keyword, hence this utility
+        function.
+    enforce_subclass : bool, optional
+        If True (default), `dist` needs to be a
+        `_distn_infrastructure.rv_generic` instance.
+        It can sometimes be useful to set this keyword to False, if a function
+        wants to accept objects that just look somewhat like such an instance
+        (for example, they have a ``ppf`` method).
+
+    """
+    if isinstance(dist, rv_generic):
+        pass
+    elif isinstance(dist, string_types):
+        try:
+            dist = getattr(distributions, dist)
+        except AttributeError:
+            raise ValueError("%s is not a valid distribution name" % dist)
+    elif enforce_subclass:
+        msg = ("`dist` should be a stats.distributions instance or a string "
+              "with the name of such a distribution.")
+        raise ValueError(msg)
+
+    return dist
+
+
 def probplot(x, sparams=(), dist='norm', fit=True, plot=None):
     """
-    Calculate quantiles for a probability plot of sample data against a
-    specified theoretical distribution.
+    Calculate quantiles for a probability plot, and optionally show the plot.
 
+    Generates a probability plot of sample data against the quantiles of a
+    specified theoretical distribution (the normal distribution by default).
     `probplot` optionally calculates a best-fit line for the data and plots the
     results using Matplotlib or a given plot function.
 
@@ -261,25 +307,29 @@ def probplot(x, sparams=(), dist='norm', fit=True, plot=None):
     x : array_like
         Sample/response data from which `probplot` creates the plot.
     sparams : tuple, optional
-        Distribution-specific shape parameters (location(s) and scale(s)).
-    dist : str, optional
-        Distribution function name. The default is 'norm' for a normal
-        probability plot.
+        Distribution-specific shape parameters (shape parameters plus location
+        and scale).
+    dist : str or stats.distributions instance, optional
+        Distribution or distribution function name. The default is 'norm' for a
+        normal probability plot.  Objects that look enough like a
+        stats.distributions instance (i.e. they have a ``ppf`` method) are also
+        accepted.
     fit : bool, optional
         Fit a least-squares regression (best-fit) line to the sample data if
         True (default).
     plot : object, optional
         If given, plots the quantiles and least squares fit.
-        `plot` is an object with methods "plot", "title", "xlabel", "ylabel"
-        and "text". The matplotlib.pyplot module or a Matplotlib axes object
-        can be used, or a custom object with the same methods.
-        By default, no plot is created.
+        `plot` is an object that has to have methods "plot" and "text".
+        The `matplotlib.pyplot` module or a Matplotlib Axes object can be used,
+        or a custom object with the same methods.
+        Default is None, which means that no plot is created.
 
     Returns
     -------
     (osm, osr) : tuple of ndarrays
         Tuple of theoretical quantiles (osm, or order statistic medians) and
-        ordered responses (osr).
+        ordered responses (osr).  `osr` is simply sorted input `x`.
+        For details on how `osm` is calculated see the Notes section.
     (slope, intercept, r) : tuple of floats, optional
         Tuple  containing the result of the least-squares fit, if that is
         performed by `probplot`. `r` is the square root of the coefficient of
@@ -289,12 +339,29 @@ def probplot(x, sparams=(), dist='norm', fit=True, plot=None):
     Notes
     -----
     Even if `plot` is given, the figure is not shown or saved by `probplot`;
-    ``plot.show()`` or ``plot.savefig('figname.png')`` should be used after
+    ``plt.show()`` or ``plt.savefig('figname.png')`` should be used after
     calling `probplot`.
+
+    `probplot` generates a probability plot, which should not be confused with
+    a Q-Q or a P-P plot.  Statsmodels has more extensive functionality of this
+    type, see ``statsmodels.api.ProbPlot``.
+
+    The formula used for the theoretical quantiles (horizontal axis of the
+    probability plot) is Filliben's estimate::
+
+        quantiles = dist.ppf(val), for
+
+                0.5**(1/n),                  for i = n
+          val = (i - 0.3175) / (n + 0.365),  for i = 2, ..., n-1
+                1 - 0.5**(1/n),              for i = 1
+
+    where ``i`` indicates the i-th ordered value and ``n`` is the total number
+    of values.
 
     Examples
     --------
-    >>> import scipy.stats as stats
+    >>> from scipy import stats
+    >>> import matplotlib.pyplot as plt
     >>> nsample = 100
     >>> np.random.seed(7654321)
 
@@ -310,7 +377,7 @@ def probplot(x, sparams=(), dist='norm', fit=True, plot=None):
     >>> x = stats.t.rvs(25, size=nsample)
     >>> res = stats.probplot(x, plot=plt)
 
-    A mixture of 2 normal distributions with broadcasting:
+    A mixture of two normal distributions with broadcasting:
 
     >>> ax3 = plt.subplot(223)
     >>> x = stats.norm.rvs(loc=[0,5], scale=[1,1.5],
@@ -323,51 +390,63 @@ def probplot(x, sparams=(), dist='norm', fit=True, plot=None):
     >>> x = stats.norm.rvs(loc=0, scale=1, size=nsample)
     >>> res = stats.probplot(x, plot=plt)
 
+    Produce a new figure with a loggamma distribution, using the ``dist`` and
+    ``sparams`` keywords:
+
+    >>> fig = plt.figure()
+    >>> ax = fig.add_subplot(111)
+    >>> x = stats.loggamma.rvs(c=2.5, size=500)
+    >>> stats.probplot(x, dist=stats.loggamma, sparams=(2.5,), plot=ax)
+    >>> ax.set_title("Probplot for loggamma dist with shape parameter 2.5")
+
+    Show the results with Matplotlib:
+
+    >>> plt.show()
+
     """
-    N = len(x)
-    Ui = zeros(N) * 1.0
-    Ui[-1] = 0.5**(1.0 / N)
-    Ui[0] = 1 - Ui[-1]
-    i = arange(2, N)
-    Ui[1:-1] = (i - 0.3175) / (N + 0.365)
-    try:
-        ppf_func = eval('distributions.%s.ppf' % dist)
-    except AttributeError:
-        raise ValueError("%s is not a valid distribution with a ppf." % dist)
+    x = np.asarray(x)
+    osm_uniform = _calc_uniform_order_statistic_medians(x)
+    dist = _parse_dist_kw(dist, enforce_subclass=False)
     if sparams is None:
         sparams = ()
     if isscalar(sparams):
         sparams = (sparams,)
     if not isinstance(sparams, tuple):
         sparams = tuple(sparams)
-    """
-    res = inspect.getargspec(ppf_func)
-    if not ('loc' == res[0][-2] and 'scale' == res[0][-1] and \
-            0.0==res[-1][-2] and 1.0==res[-1][-1]):
-        raise ValueError("Function has does not have default location "
-              "and scale parameters\n  that are 0.0 and 1.0 respectively.")
-    if (len(sparams) < len(res[0])-len(res[-1])-1) or \
-       (len(sparams) > len(res[0])-3):
-        raise ValueError("Incorrect number of shape parameters.")
-    """
-    osm = ppf_func(Ui, *sparams)
+
+    osm = dist.ppf(osm_uniform, *sparams)
     osr = sort(x)
     if fit or (plot is not None):
         # perform a linear fit.
         slope, intercept, r, prob, sterrest = stats.linregress(osm, osr)
-    if plot is not None:
-        plot.plot(osm, osr, 'o', osm, slope*osm + intercept)
-        plot.title('Probability Plot')
-        plot.xlabel('Quantiles')
-        plot.ylabel('Ordered Values')
 
+    if plot is not None:
+        plot.plot(osm, osr, 'bo', osm, slope*osm + intercept, 'r-')
+        try:
+            if hasattr(plot, 'set_title'):
+                # Matplotlib Axes instance or something that looks like it
+                plot.set_title('Probability Plot')
+                plot.set_xlabel('Quantiles')
+                plot.set_ylabel('Ordered Values')
+            else:
+                # matplotlib.pyplot module
+                plot.title('Probability Plot')
+                plot.xlabel('Quantiles')
+                plot.ylabel('Ordered Values')
+        except:
+            # Not an MPL object or something that looks (enough) like it.
+            # Don't crash on adding labels or title
+            pass
+
+        # Add R^2 value to the plot as text
         xmin = amin(osm)
         xmax = amax(osm)
         ymin = amin(x)
         ymax = amax(x)
         posx = xmin + 0.70 * (xmax - xmin)
         posy = ymin + 0.01 * (ymax - ymin)
-        plot.text(posx, posy, "r^2=%1.4f" % r)
+        plot.text(posx, posy, "$R^2=%1.4f$" % r)
+
     if fit:
         return (osm, osr), (slope, intercept, r)
     else:
@@ -381,38 +460,20 @@ def ppcc_max(x, brack=(0.0,1.0), dist='tukeylambda'):
 
     See also ppcc_plot
     """
-    try:
-        ppf_func = eval('distributions.%s.ppf' % dist)
-    except AttributeError:
-        raise ValueError("%s is not a valid distribution with a ppf." % dist)
-    """
-    res = inspect.getargspec(ppf_func)
-    if not ('loc' == res[0][-2] and 'scale' == res[0][-1] and \
-            0.0==res[-1][-2] and 1.0==res[-1][-1]):
-        raise ValueError("Function has does not have default location "
-              "and scale parameters\n  that are 0.0 and 1.0 respectively.")
-    if (1 < len(res[0])-len(res[-1])-1) or \
-       (1 > len(res[0])-3):
-        raise ValueError("Must be a one-parameter family.")
-    """
-    N = len(x)
-    # compute uniform median statistics
-    Ui = zeros(N)*1.0
-    Ui[-1] = 0.5**(1.0/N)
-    Ui[0] = 1-Ui[-1]
-    i = arange(2,N)
-    Ui[1:-1] = (i-0.3175)/(N+0.365)
+    dist = _parse_dist_kw(dist)
+    osm_uniform = _calc_uniform_order_statistic_medians(x)
     osr = sort(x)
+
     # this function computes the x-axis values of the probability plot
     #  and computes a linear regression (including the correlation)
     #  and returns 1-r so that a minimization function maximizes the
     #  correlation
-
     def tempfunc(shape, mi, yvals, func):
         xvals = func(mi, shape)
         r, prob = stats.pearsonr(xvals, yvals)
         return 1-r
-    return optimize.brent(tempfunc, brack=brack, args=(Ui, osr, ppf_func))
+
+    return optimize.brent(tempfunc, brack=brack, args=(osm_uniform, osr, dist.ppf))
 
 
 def ppcc_plot(x,a,b,dist='tukeylambda', plot=None, N=80):
@@ -433,58 +494,145 @@ def ppcc_plot(x,a,b,dist='tukeylambda', plot=None, N=80):
     if plot is not None:
         plot.plot(svals, ppcc, 'x')
         plot.title('(%s) PPCC Plot' % dist)
-        plot.xlabel('Prob Plot Corr. Coef.')  # ,deltay=-0.01)
-        plot.ylabel('Shape Values')  # ,deltax=-0.01)
+        plot.xlabel('Prob Plot Corr. Coef.')
+        plot.ylabel('Shape Values')
     return svals, ppcc
 
 
 def boxcox_llf(lmb, data):
-    """The boxcox log-likelihood function.
+    r"""The boxcox log-likelihood function.
+
+    Parameters
+    ----------
+    lmb : scalar
+        Parameter for Box-Cox transformation.  See `boxcox` for details.
+    data : array_like
+        Data to calculate Box-Cox log-likelihood for.  If `data` is
+        multi-dimensional, the log-likelihood is calculated along the first
+        axis.
+
+    Returns
+    -------
+    llf : float or ndarray
+        Box-Cox log-likelihood of `data` given `lmb`.  A float for 1-D `data`,
+        an array otherwise.
+
+    See Also
+    --------
+    boxcox, probplot, boxcox_normplot, boxcox_normmax
+
+    Notes
+    -----
+    The Box-Cox log-likelihood function is defined here as
+
+    .. math::
+
+        llf = (\lambda - 1) \sum_i(\log(x_i)) -
+              N/2 \log(\sum_i (y_i - \bar{y})^2 / N),
+
+    where ``y`` is the Box-Cox transformed input data ``x``.
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> import matplotlib.pyplot as plt
+    >>> from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    >>> np.random.seed(1245)
+
+    Generate some random variates and calculate Box-Cox log-likelihood values
+    for them for a range of ``lmbda`` values:
+
+    >>> x = stats.loggamma.rvs(5, loc=10, size=1000)
+    >>> lmbdas = np.linspace(-2, 10)
+    >>> llf = np.zeros(lmbdas.shape, dtype=np.float)
+    >>> for ii, lmbda in enumerate(lmbdas):
+    ...     llf[ii] = stats.boxcox_llf(lmbda, x)
+
+    Also find the optimal lmbda value with `boxcox`:
+
+    >>> x_most_normal, lmbda_optimal = stats.boxcox(x)
+
+    Plot the log-likelihood as function of lmbda.  Add the optimal lmbda as a
+    horizontal line to check that that's really the optimum:
+
+    >>> fig = plt.figure()
+    >>> ax = fig.add_subplot(111)
+    >>> ax.plot(lmbdas, llf, 'b.-')
+    >>> ax.axhline(stats.boxcox_llf(lmbda_optimal, x), color='r')
+    >>> ax.set_xlabel('lmbda parameter')
+    >>> ax.set_ylabel('Box-Cox log-likelihood')
+
+    Now add some probability plots to show that where the log-likelihood is
+    maximized the data transformed with `boxcox` looks closest to normal:
+
+    >>> locs = [3, 10, 4]  # 'lower left', 'center', 'lower right'
+    >>> for lmbda, loc in zip([-1, lmbda_optimal, 9], locs):
+    ...     xt = stats.boxcox(x, lmbda=lmbda)
+    ...     (osm, osr), (slope, intercept, r_sq) = stats.probplot(xt)
+    ...     ax_inset = inset_axes(ax, width="20%", height="20%", loc=loc)
+    ...     ax_inset.plot(osm, osr, 'c.', osm, slope*osm + intercept, 'k-')
+    ...     ax_inset.set_xticklabels([])
+    ...     ax_inset.set_yticklabels([])
+    ...     ax_inset.set_title('$\lambda=%1.2f$' % lmbda)
+
+    >>> plt.show()
+
     """
-    N = len(data)
-    y = boxcox(data,lmb)
-    my = np.mean(y, axis=0)
-    f = (lmb-1)*sum(log(data),axis=0)
-    f -= N/2.0*log(sum((y-my)**2.0/N,axis=0))
-    return f
+    data = np.asarray(data)
+    N = data.shape[0]
+    if N == 0:
+        return np.nan
+
+    y = boxcox(data, lmb)
+    y_mean = np.mean(y, axis=0)
+    llf = (lmb - 1) * np.sum(np.log(data), axis=0)
+    llf -= N / 2.0 * np.log(np.sum((y - y_mean)**2. / N, axis=0))
+    return llf
 
 
 def _boxcox_conf_interval(x, lmax, alpha):
     # Need to find the lambda for which
     #  f(x,lmbda) >= f(x,lmax) - 0.5*chi^2_alpha;1
-    fac = 0.5*distributions.chi2.ppf(1-alpha,1)
-    target = boxcox_llf(lmax,x)-fac
+    fac = 0.5 * distributions.chi2.ppf(1 - alpha, 1)
+    target = boxcox_llf(lmax, x) - fac
 
-    def rootfunc(lmbda,data,target):
-        return boxcox_llf(lmbda,data) - target
-    # Find positive endpont
-    newlm = lmax+0.5
+    def rootfunc(lmbda, data, target):
+        return boxcox_llf(lmbda, data) - target
+
+    # Find positive endpoint of interval in which answer is to be found
+    newlm = lmax + 0.5
     N = 0
-    while (rootfunc(newlm,x,target) > 0.0) and (N < 500):
+    while (rootfunc(newlm, x, target) > 0.0) and (N < 500):
         newlm += 0.1
         N += 1
+
     if N == 500:
         raise RuntimeError("Could not find endpoint.")
-    lmplus = optimize.brentq(rootfunc,lmax,newlm,args=(x,target))
-    newlm = lmax-0.5
+
+    lmplus = optimize.brentq(rootfunc, lmax, newlm, args=(x, target))
+
+    # Now find negative interval in the same way
+    newlm = lmax - 0.5
     N = 0
-    while (rootfunc(newlm,x,target) > 0.0) and (N < 500):
-        newlm += 0.1
+    while (rootfunc(newlm, x, target) > 0.0) and (N < 500):
+        newlm -= 0.1
         N += 1
+
     if N == 500:
         raise RuntimeError("Could not find endpoint.")
-    lmminus = optimize.brentq(rootfunc, newlm, lmax, args=(x,target))
+
+    lmminus = optimize.brentq(rootfunc, newlm, lmax, args=(x, target))
     return lmminus, lmplus
 
 
-def boxcox(x,lmbda=None,alpha=None):
-    """
+def boxcox(x, lmbda=None, alpha=None):
+    r"""
     Return a positive dataset transformed by a Box-Cox power transformation.
 
     Parameters
     ----------
     x : ndarray
-        Input array.
+        Input array.  Should be 1-dimensional.
     lmbda : {None, scalar}, optional
         If `lmbda` is not None, do the transformation for that value.
 
@@ -493,8 +641,7 @@ def boxcox(x,lmbda=None,alpha=None):
     alpha : {None, float}, optional
         If `alpha` is not None, return the ``100 * (1-alpha)%`` confidence
         interval for `lmbda` as the third output argument.
-
-        If `alpha` is not None it must be between 0.0 and 1.0.
+        Must be between 0.0 and 1.0.
 
     Returns
     -------
@@ -508,67 +655,291 @@ def boxcox(x,lmbda=None,alpha=None):
         tuple of floats represents the minimum and maximum confidence limits
         given `alpha`.
 
-    """
-    if any(x < 0):
-        raise ValueError("Data must be positive.")
-    if lmbda is not None:  # single transformation
-        lmbda = lmbda*(x == x)
-        y = where(lmbda == 0, log(x), (x**lmbda - 1)/lmbda)
-        return y
+    See Also
+    --------
+    probplot, boxcox_normplot, boxcox_normmax, boxcox_llf
 
-    # Otherwise find the lmbda that maximizes the log-likelihood function.
-    def tempfunc(lmb, data):  # function to minimize
-        return -boxcox_llf(lmb,data)
-    lmax = optimize.brent(tempfunc, brack=(-2.0,2.0),args=(x,))
+    Notes
+    -----
+    The Box-Cox transform is given by::
+
+        y = (x**lmbda - 1) / lmbda,  for lmbda > 0
+            log(x),                  for lmbda = 0
+
+    `boxcox` requires the input data to be positive.  Sometimes a Box-Cox
+    transformation provides a shift parameter to achieve this; `boxcox` does
+    not.  Such a shift parameter is equivalent to adding a positive constant to
+    `x` before calling `boxcox`.
+
+    The confidence limits returned when `alpha` is provided give the interval
+    where:
+
+    .. math::
+
+        llf(\hat{\lambda}) - llf(\lambda) < \frac{1}{2}\chi^2(1 - \alpha, 1),
+
+    with ``llf`` the log-likelihood function and :math:`\chi^2` the chi-squared
+    function.
+
+    References
+    ----------
+    G.E.P. Box and D.R. Cox, "An Analysis of Transformations", Journal of the
+    Royal Statistical Society B, 26, 211-252 (1964).
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> import matplotlib.pyplot as plt
+
+    We generate some random variates from a non-normal distribution and make a
+    probability plot for it, to show it is non-normal in the tails:
+
+    >>> fig = plt.figure()
+    >>> ax1 = fig.add_subplot(211)
+    >>> x = stats.loggamma.rvs(5, size=500) + 5
+    >>> stats.probplot(x, dist=stats.norm, plot=ax1)
+    >>> ax1.set_xlabel('')
+    >>> ax1.set_title('Probplot against normal distribution')
+
+    We now use `boxcox` to transform the data so it's closest to normal:
+
+    >>> ax2 = fig.add_subplot(212)
+    >>> xt, _ = stats.boxcox(x)
+    >>> stats.probplot(xt, dist=stats.norm, plot=ax2)
+    >>> ax2.set_title('Probplot after Box-Cox transformation')
+
+    >>> plt.show()
+
+    """
+    x = np.asarray(x)
+    if x.size == 0:
+        return x
+
+    if any(x <= 0):
+        raise ValueError("Data must be positive.")
+
+    if lmbda is not None:  # single transformation
+        return special.boxcox(x, lmbda)
+
+    # If lmbda=None, find the lmbda that maximizes the log-likelihood function.
+    lmax = boxcox_normmax(x, method='mle')
     y = boxcox(x, lmax)
+
     if alpha is None:
         return y, lmax
-    # Otherwise find confidence interval
-    interval = _boxcox_conf_interval(x, lmax, alpha)
-    return y, lmax, interval
+    else:
+        # Find confidence interval
+        interval = _boxcox_conf_interval(x, lmax, alpha)
+        return y, lmax, interval
 
 
-def boxcox_normmax(x,brack=(-1.0,1.0)):
-    N = len(x)
-    # compute uniform median statistics
-    Ui = zeros(N)*1.0
-    Ui[-1] = 0.5**(1.0/N)
-    Ui[0] = 1-Ui[-1]
-    i = arange(2,N)
-    Ui[1:-1] = (i-0.3175)/(N+0.365)
-    # this function computes the x-axis values of the probability plot
-    #  and computes a linear regression (including the correlation)
-    #  and returns 1-r so that a minimization function maximizes the
-    #  correlation
-    xvals = distributions.norm.ppf(Ui)
+def boxcox_normmax(x, brack=(-2.0, 2.0), method='pearsonr'):
+    """Compute optimal Box-Cox transform parameter for input data.
 
-    def tempfunc(lmbda, xvals, samps):
-        y = boxcox(samps,lmbda)
-        yvals = sort(y)
-        r, prob = stats.pearsonr(xvals, yvals)
-        return 1-r
-    return optimize.brent(tempfunc, brack=brack, args=(xvals, x))
+    Parameters
+    ----------
+    x : array_like
+        Input array.
+    brack : 2-tuple, optional
+        The starting interval for a downhill bracket search with
+        `optimize.brent`.  Note that this is in most cases not critical; the
+        final result is allowed to be outside this bracket.
+    method : str, optional
+        The method to determine the optimal transform parameter (`boxcox`
+        ``lmbda`` parameter). Options are:
+
+        'pearsonr'  (default)
+            Maximizes the Pearson correlation coefficient between
+            ``y = boxcox(x)`` and the expected values for ``y`` if `x` would be
+            normally-distributed.
+
+        'mle'
+            Minimizes the log-likelihood `boxcox_llf`.  This is the method used
+            in `boxcox`.
+
+        'all'
+            Use all optimization methods available, and return all results.
+            Useful to compare different methods.
+
+    Returns
+    -------
+    maxlog : float or ndarray
+        The optimal transform parameter found.  An array instead of a scalar
+        for ``method='all'``.
+
+    See Also
+    --------
+    boxcox, boxcox_llf, boxcox_normplot
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> import matplotlib.pyplot as plt
+    >>> np.random.seed(1234)  # make this example reproducible
+
+    Generate some data and determine optimal ``lmbda`` in various ways:
+
+    >>> x = stats.loggamma.rvs(5, size=30) + 5
+    >>> y, lmax_mle = stats.boxcox(x)
+    >>> lmax_pearsonr = stats.boxcox_normmax(x)
+
+    >>> lmax_mle
+    7.177...
+    >>> lmax_pearsonr
+    7.916...
+    >>> stats.boxcox_normmax(x, method='all')
+    array([ 7.91667384,  7.17718692])
+
+    >>> fig = plt.figure()
+    >>> ax = fig.add_subplot(111)
+    >>> stats.boxcox_normplot(x, -10, 10, plot=ax)
+    >>> ax.axvline(lmax_mle, color='r')
+    >>> ax.axvline(lmax_pearsonr, color='g', ls='--')
+
+    >>> plt.show()
+
+    """
+    def _pearsonr(x, brack):
+        osm_uniform = _calc_uniform_order_statistic_medians(x)
+        xvals = distributions.norm.ppf(osm_uniform)
+
+        def _eval_pearsonr(lmbda, xvals, samps):
+            # This function computes the x-axis values of the probability plot
+            # and computes a linear regression (including the correlation) and
+            # returns ``1 - r`` so that a minimization function maximizes the
+            # correlation.
+            y = boxcox(samps, lmbda)
+            yvals = np.sort(y)
+            r, prob = stats.pearsonr(xvals, yvals)
+            return 1 - r
+
+        return optimize.brent(_eval_pearsonr, brack=brack, args=(xvals, x))
+
+    def _mle(x, brack):
+        def _eval_mle(lmb, data):
+            # function to minimize
+            return -boxcox_llf(lmb, data)
+
+        return optimize.brent(_eval_mle, brack=brack, args=(x,))
+
+    def _all(x, brack):
+        maxlog = np.zeros(2, dtype=np.float)
+        maxlog[0] = _pearsonr(x, brack)
+        maxlog[1] = _mle(x, brack)
+        return maxlog
+
+    methods = {'pearsonr': _pearsonr,
+               'mle': _mle,
+               'all': _all}
+    if method not in methods.keys():
+        raise ValueError("Method %s not recognized." % method)
+
+    optimfunc = methods[method]
+    return optimfunc(x, brack)
 
 
-def boxcox_normplot(x,la,lb,plot=None,N=80):
-    svals = r_[la:lb:complex(N)]
-    ppcc = svals*0.0
-    k = 0
-    for sval in svals:
-        # JP: this doesn't use sval, creates constant ppcc, and horizontal line
-        z = boxcox(x,sval)  # JP: this was missing
-        r1,r2 = probplot(z,dist='norm',fit=1)
-        ppcc[k] = r2[-1]
-        k += 1
+def boxcox_normplot(x, la, lb, plot=None, N=80):
+    """Compute parameters for a Box-Cox normality plot, optionally show it.
+
+    A Box-Cox normality plot shows graphically what the best transformation
+    parameter is to use in `boxcox` to obtain a distribution that is close
+    to normal.
+
+    Parameters
+    ----------
+    x : array_like
+        Input array.
+    la, lb : scalar
+        The lower and upper bounds for the ``lmbda`` values to pass to `boxcox`
+        for Box-Cox transformations.  These are also the limits of the
+        horizontal axis of the plot if that is generated.
+    plot : object, optional
+        If given, plots the quantiles and least squares fit.
+        `plot` is an object that has to have methods "plot" and "text".
+        The `matplotlib.pyplot` module or a Matplotlib Axes object can be used,
+        or a custom object with the same methods.
+        Default is None, which means that no plot is created.
+    N : int, optional
+        Number of points on the horizontal axis (equally distributed from
+        `la` to `lb`).
+
+    Returns
+    -------
+    lmbdas : ndarray
+        The ``lmbda`` values for which a Box-Cox transform was done.
+    ppcc : ndarray
+        Probability Plot Correlelation Coefficient, as obtained from `probplot`
+        when fitting the Box-Cox transformed input `x` against a normal
+        distribution.
+
+    See Also
+    --------
+    probplot, boxcox, boxcox_normmax, boxcox_llf, ppcc_max
+
+    Notes
+    -----
+    Even if `plot` is given, the figure is not shown or saved by
+    `boxcox_normplot`; ``plt.show()`` or ``plt.savefig('figname.png')``
+    should be used after calling `probplot`.
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> import matplotlib.pyplot as plt
+
+    Generate some non-normally distributed data, and create a Box-Cox plot:
+
+    >>> x = stats.loggamma.rvs(5, size=500) + 5
+    >>> fig = plt.figure()
+    >>> ax = fig.add_subplot(111)
+    >>> stats.boxcox_normplot(x, -20, 20, plot=ax)
+
+    Determine and plot the optimal ``lmbda`` to transform ``x`` and plot it in
+    the same plot:
+
+    >>> _, maxlog = stats.boxcox(x)
+    >>> ax.axvline(maxlog, color='r')
+
+    >>> plt.show()
+
+    """
+    x = np.asarray(x)
+    if x.size == 0:
+        return x
+
+    if lb <= la:
+        raise ValueError("`lb` has to be larger than `la`.")
+
+    lmbdas = np.linspace(la, lb, num=N)
+    ppcc = lmbdas * 0.0
+    for i, val in enumerate(lmbdas):
+        # Determine for each lmbda the correlation coefficient of transformed x
+        z = boxcox(x, lmbda=val)
+        _, r2 = probplot(z, dist='norm', fit=True)
+        ppcc[i] = r2[-1]
+
     if plot is not None:
-        plot.plot(svals, ppcc, 'x')
-        plot.title('Box-Cox Normality Plot')
-        plot.xlabel('Prob Plot Corr. Coef.')
-        plot.ylabel('Transformation parameter')
-    return svals, ppcc
+        plot.plot(lmbdas, ppcc, 'x')
+        try:
+            if hasattr(plot, 'set_title'):
+                # Matplotlib Axes instance or something that looks like it
+                plot.set_title('Box-Cox Normality Plot')
+                plot.set_ylabel('Prob Plot Corr. Coef.')
+                plot.set_xlabel('$\lambda$')
+            else:
+                # matplotlib.pyplot module
+                plot.title('Box-Cox Normality Plot')
+                plot.ylabel('Prob Plot Corr. Coef.')
+                plot.xlabel('$\lambda$')
+        except Exception:
+            # Not an MPL object or something that looks (enough) like it.
+            # Don't crash on adding labels or title
+            pass
+
+    return lmbdas, ppcc
 
 
-def shapiro(x,a=None,reta=False):
+def shapiro(x, a=None, reta=False):
     """
     Perform the Shapiro-Wilk test for normality.
 
@@ -618,7 +989,7 @@ def shapiro(x,a=None,reta=False):
         init = 1
     y = sort(x)
     a, w, pw, ifault = statlib.swilk(y, a[:N//2], init)
-    if not ifault in [0,2]:
+    if ifault not in [0,2]:
         warnings.warn(str(ifault))
     if N > 5000:
         warnings.warn("p-value may not be accurate for N > 5000.")
@@ -646,7 +1017,7 @@ def anderson(x,dist='norm'):
     Anderson-Darling test for data coming from a particular distribution
 
     The Anderson-Darling test is a modification of the Kolmogorov-
-    Smirnov test kstest_ for the null hypothesis that a sample is
+    Smirnov test `kstest` for the null hypothesis that a sample is
     drawn from a population that follows a particular distribution.
     For the Anderson-Darling test, the critical values depend on
     which distribution is being tested against.  This function works
@@ -707,7 +1078,7 @@ def anderson(x,dist='norm'):
            pp. 591-595.
 
     """
-    if not dist in ['norm','expon','gumbel','extreme1','logistic']:
+    if dist not in ['norm','expon','gumbel','extreme1','logistic']:
         raise ValueError("Invalid distribution; dist must be 'norm', "
                             "'expon', 'gumbel', 'extreme1' or 'logistic'.")
     y = sort(x)
@@ -740,14 +1111,14 @@ def anderson(x,dist='norm'):
         critical = around(_Avals_logistic / (1.0+0.25/N),3)
     else:  # (dist == 'gumbel') or (dist == 'extreme1'):
         # the following is incorrect, see ticket:1097
-##        def fixedsolve(th,xj,N):
-##            val = stats.sum(xj)*1.0/N
-##            tmp = exp(-xj/th)
-##            term = sum(xj*tmp,axis=0)
-##            term /= sum(tmp,axis=0)
-##            return val - term
-##        s = optimize.fixed_point(fixedsolve, 1.0, args=(x,N),xtol=1e-5)
-##        xbar = -s*log(sum(exp(-x/s),axis=0)*1.0/N)
+        #def fixedsolve(th,xj,N):
+        #    val = stats.sum(xj)*1.0/N
+        #    tmp = exp(-xj/th)
+        #    term = sum(xj*tmp,axis=0)
+        #    term /= sum(tmp,axis=0)
+        #    return val - term
+        #s = optimize.fixed_point(fixedsolve, 1.0, args=(x,N),xtol=1e-5)
+        #xbar = -s*log(sum(exp(-x/s),axis=0)*1.0/N)
         xbar, s = distributions.gumbel_l.fit(x)
         w = (y-xbar)/s
         z = distributions.gumbel_l.cdf(w)
@@ -758,6 +1129,229 @@ def anderson(x,dist='norm'):
     S = sum((2*i-1.0)/N*(log(z)+log(1-z[::-1])),axis=0)
     A2 = -N-S
     return A2, critical, sig
+
+
+def _anderson_ksamp_midrank(samples, Z, Zstar, k, n, N):
+    """
+    Compute A2akN equation 7 of Scholz and Stephens.
+
+    Parameters
+    ----------
+    samples : sequence of 1-D array_like
+        Array of sample arrays.
+    Z : array_like
+        Sorted array of all observations.
+    Zstar : array_like
+        Sorted array of unique observations.
+    k : int
+        Number of samples.
+    n : array_like
+        Number of observations in each sample.
+    N : int
+        Total number of observations.
+
+    Returns
+    -------
+    A2aKN : float
+        The A2aKN statistics of Scholz and Stephens 1987.
+    """
+
+    A2akN = 0.
+    Z_ssorted_left = Z.searchsorted(Zstar, 'left')
+    if N == Zstar.size:
+        lj = 1.
+    else:
+        lj = Z.searchsorted(Zstar, 'right') - Z_ssorted_left
+    Bj = Z_ssorted_left + lj / 2.
+    for i in arange(0, k):
+        s = np.sort(samples[i])
+        s_ssorted_right = s.searchsorted(Zstar, side='right')
+        Mij = s_ssorted_right.astype(np.float)
+        fij = s_ssorted_right - s.searchsorted(Zstar, 'left')
+        Mij -= fij / 2.
+        inner = lj / float(N) * (N * Mij - Bj * n[i])**2 / \
+            (Bj * (N - Bj) - N * lj / 4.)
+        A2akN += inner.sum() / n[i]
+    A2akN *= (N - 1.) / N
+    return A2akN
+
+
+def _anderson_ksamp_right(samples, Z, Zstar, k, n, N):
+    """
+    Compute A2akN equation 6 of Scholz & Stephens.
+
+    Parameters
+    ----------
+    samples : sequence of 1-D array_like
+        Array of sample arrays.
+    Z : array_like
+        Sorted array of all observations.
+    Zstar : array_like
+        Sorted array of unique observations.
+    k : int
+        Number of samples.
+    n : array_like
+        Number of observations in each sample.
+    N : int
+        Total number of observations.
+
+    Returns
+    -------
+    A2KN : float
+        The A2KN statistics of Scholz and Stephens 1987.
+    """
+
+    A2kN = 0.
+    lj = Z.searchsorted(Zstar[:-1], 'right') - Z.searchsorted(Zstar[:-1],
+                                                              'left')
+    Bj = lj.cumsum()
+    for i in arange(0, k):
+        s = np.sort(samples[i])
+        Mij = s.searchsorted(Zstar[:-1], side='right')
+        inner = lj / float(N) * (N * Mij - Bj * n[i])**2 / (Bj * (N - Bj))
+        A2kN += inner.sum() / n[i]
+    return A2kN
+
+
+def anderson_ksamp(samples, midrank=True):
+    """The Anderson-Darling test for k-samples.
+
+    The k-sample Anderson-Darling test is a modification of the
+    one-sample Anderson-Darling test. It tests the null hypothesis
+    that k-samples are drawn from the same population without having
+    to specify the distribution function of that population. The
+    critical values depend on the number of samples.
+
+    Parameters
+    ----------
+    samples : sequence of 1-D array_like
+        Array of sample data in arrays.
+    midrank : bool, optional
+        Type of Anderson-Darling test which is computed. Default
+        (True) is the midrank test applicable to continuous and
+        discrete populations. If False, the right side empirical
+        distribution is used.
+
+    Returns
+    -------
+    A2 : float
+        Normalized k-sample Anderson-Darling test statistic.
+    critical : array
+        The critical values for significance levels 25%, 10%, 5%, 2.5%, 1%.
+    p : float
+        An approximate significance level at which the null hypothesis for the
+        provided samples can be rejected.
+
+    Raises
+    ------
+    ValueError
+        If less than 2 samples are provided, a sample is empty, or no
+        distinct observations are in the samples.
+
+    See Also
+    --------
+    ks_2samp : 2 sample Kolmogorov-Smirnov test
+    anderson : 1 sample Anderson-Darling test
+
+    Notes
+    -----
+    [1]_ Defines three versions of the k-sample Anderson-Darling test:
+    one for continuous distributions and two for discrete
+    distributions, in which ties between samples may occur. The
+    default of this routine is to compute the version based on the
+    midrank empirical distribution function. This test is applicable
+    to continuous and discrete data. If midrank is set to False, the
+    right side empirical distribution is used for a test for discrete
+    data. According to [1]_, the two discrete test statistics differ
+    only slightly if a few collisions due to round-off errors occur in
+    the test not adjusted for ties between samples.
+
+    .. versionadded:: 0.14.0
+
+    References
+    ----------
+    .. [1] Scholz, F. W and Stephens, M. A. (1987), K-Sample
+           Anderson-Darling Tests, Journal of the American Statistical
+           Association, Vol. 82, pp. 918-924.
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> np.random.seed(314159)
+
+    The null hypothesis that the two random samples come from the same
+    distribution can be rejected at the 5% level because the returned
+    test value is greater than the critical value for 5% (1.961) but
+    not at the 2.5% level. The interpolation gives an approximate
+    significance level of 3.1%:
+
+    >>> stats.anderson_ksamp([np.random.normal(size=50),
+    ... np.random.normal(loc=0.5, size=30)])
+    (2.4615796189876105,
+      array([ 0.325,  1.226,  1.961,  2.718,  3.752]),
+      0.03134990135800783)
+
+
+    The null hypothesis cannot be rejected for three samples from an
+    identical distribution. The approximate p-value (87%) has to be
+    computed by extrapolation and may not be very accurate:
+
+    >>> stats.anderson_ksamp([np.random.normal(size=50),
+    ... np.random.normal(size=30), np.random.normal(size=20)])
+    (-0.73091722665244196,
+      array([ 0.44925884,  1.3052767 ,  1.9434184 ,  2.57696569,  3.41634856]),
+      0.8789283903979661)
+
+    """
+    k = len(samples)
+    if (k < 2):
+        raise ValueError("anderson_ksamp needs at least two samples")
+
+    samples = list(map(np.asarray, samples))
+    Z = np.sort(np.hstack(samples))
+    N = Z.size
+    Zstar = np.unique(Z)
+    if Zstar.size < 2:
+        raise ValueError("anderson_ksamp needs more than one distinct "
+                         "observation")
+
+    n = np.array([sample.size for sample in samples])
+    if any(n == 0):
+        raise ValueError("anderson_ksamp encountered sample without "
+                         "observations")
+
+    if midrank:
+        A2kN = _anderson_ksamp_midrank(samples, Z, Zstar, k, n, N)
+    else:
+        A2kN = _anderson_ksamp_right(samples, Z, Zstar, k, n, N)
+
+    h = (1. / arange(1, N)).sum()
+    H = (1. / n).sum()
+    g = 0
+    for l in arange(1, N-1):
+        inner = np.array([1. / ((N - l) * m) for m in arange(l+1, N)])
+        g += inner.sum()
+
+    a = (4*g - 6) * (k - 1) + (10 - 6*g)*H
+    b = (2*g - 4)*k**2 + 8*h*k + (2*g - 14*h - 4)*H - 8*h + 4*g - 6
+    c = (6*h + 2*g - 2)*k**2 + (4*h - 4*g + 6)*k + (2*h - 6)*H + 4*h
+    d = (2*h + 6)*k**2 - 4*h*k
+    sigmasq = (a*N**3 + b*N**2 + c*N + d) / ((N - 1.) * (N - 2.) * (N - 3.))
+    m = k - 1
+    A2 = (A2kN - m) / math.sqrt(sigmasq)
+
+    # The b_i values are the interpolation coefficients from Table 2
+    # of Scholz and Stephens 1987
+    b0 = np.array([0.675, 1.281, 1.645, 1.96, 2.326])
+    b1 = np.array([-0.245, 0.25, 0.678, 1.149, 1.822])
+    b2 = np.array([-0.105, -0.305, -0.362, -0.391, -0.396])
+    critical = b0 + b1 / math.sqrt(m) + b2 / m
+    pf = np.polyfit(critical, log(np.array([0.25, 0.1, 0.05, 0.025, 0.01])), 2)
+    if A2 < critical.min() or A2 > critical.max():
+        warnings.warn("approximate p-value will be computed by extrapolation")
+
+    p = math.exp(np.polyval(pf, A2))
+    return A2, critical, p
 
 
 def ansari(x,y):
@@ -961,7 +1555,7 @@ def levene(*args,**kwds):
     Ni = zeros(k)
     Yci = zeros(k,'d')
 
-    if not center in ['mean','median','trimmed']:
+    if center not in ['mean','median','trimmed']:
         raise ValueError("Keyword argument <center> must be 'mean', 'median'"
               + "or 'trimmed'.")
 
@@ -970,7 +1564,7 @@ def levene(*args,**kwds):
     elif center == 'mean':
         func = lambda x: np.mean(x, axis=0)
     else:  # center == 'trimmed'
-        args = tuple(stats.trimboth(arg, proportiontocut) for arg in args)
+        args = tuple(stats.trimboth(np.sort(arg), proportiontocut) for arg in args)
         func = lambda x: np.mean(x, axis=0)
 
     for j in range(k):
@@ -1052,30 +1646,33 @@ def binom_test(x,n=None,p=0.5):
 
     d = distributions.binom.pmf(x,n,p)
     rerr = 1+1e-7
-    if (x < p*n):
+    if (x == p*n):
+        # special case as shortcut, would also be handled by `else` below
+        pval = 1.
+    elif (x < p*n):
         i = np.arange(np.ceil(p*n),n+1)
         y = np.sum(distributions.binom.pmf(i,n,p) <= d*rerr,axis=0)
         pval = distributions.binom.cdf(x,n,p) + distributions.binom.sf(n-y,n,p)
     else:
-        i = np.arange(np.floor(p*n))
+        i = np.arange(np.floor(p*n) + 1)
         y = np.sum(distributions.binom.pmf(i,n,p) <= d*rerr,axis=0)
         pval = distributions.binom.cdf(y-1,n,p) + distributions.binom.sf(x-1,n,p)
 
     return min(1.0,pval)
 
 
-def _apply_func(x,g,func):
+def _apply_func(x, g, func):
     # g is list of indices into x
     #  separating x into different groups
     #  func should be applied over the groups
-    g = unique(r_[0,g,len(x)])
+    g = unique(r_[0, g, len(x)])
     output = []
     for k in range(len(g)-1):
         output.append(func(x[g[k]:g[k+1]]))
     return asarray(output)
 
 
-def fligner(*args,**kwds):
+def fligner(*args, **kwds):
     """
     Perform Fligner's test for equal variances.
 
@@ -1087,11 +1684,10 @@ def fligner(*args,**kwds):
     Parameters
     ----------
     sample1, sample2, ... : array_like
-        arrays of sample data.  Need not be the same length
+        Arrays of sample data.  Need not be the same length.
     center : {'mean', 'median', 'trimmed'}, optional
-        keyword argument controlling which function of the data
-        is used in computing the test statistic.  The default
-        is 'median'.
+        Keyword argument controlling which function of the data is used in
+        computing the test statistic.  The default is 'median'.
     proportiontocut : float, optional
         When `center` is 'trimmed', this gives the proportion of data points
         to cut from each end. (See `scipy.stats.trim_mean`.)
@@ -1100,15 +1696,15 @@ def fligner(*args,**kwds):
     Returns
     -------
     Xsq : float
-        the test statistic
+        The test statistic.
     p-value : float
-        the p-value for the hypothesis test
+        The p-value for the hypothesis test.
 
     Notes
     -----
-    As with Levene's test there are three variants
-    of Fligner's test that differ by the measure of central
-    tendency used in the test.  See `levene` for more information.
+    As with Levene's test there are three variants of Fligner's test that
+    differ by the measure of central tendency used in the test.  See `levene`
+    for more information.
 
     References
     ----------
@@ -1124,7 +1720,8 @@ def fligner(*args,**kwds):
     proportiontocut = 0.05
     for kw, value in kwds.items():
         if kw not in ['center', 'proportiontocut']:
-            raise TypeError("fligner() got an unexpected keyword argument '%s'" % kw)
+            raise TypeError("fligner() got an unexpected keyword "
+                            "argument '%s'" % kw)
         if kw == 'center':
             center = value
         else:
@@ -1134,7 +1731,7 @@ def fligner(*args,**kwds):
     if k < 2:
         raise ValueError("Must enter at least two input sample vectors.")
 
-    if not center in ['mean','median','trimmed']:
+    if center not in ['mean','median','trimmed']:
         raise ValueError("Keyword argument <center> must be 'mean', 'median'"
               + "or 'trimmed'.")
 
@@ -1148,9 +1745,9 @@ def fligner(*args,**kwds):
 
     Ni = asarray([len(args[j]) for j in range(k)])
     Yci = asarray([func(args[j]) for j in range(k)])
-    Ntot = sum(Ni,axis=0)
+    Ntot = sum(Ni, axis=0)
     # compute Zij's
-    Zij = [abs(asarray(args[i])-Yci[i]) for i in range(k)]
+    Zij = [abs(asarray(args[i]) - Yci[i]) for i in range(k)]
     allZij = []
     g = [0]
     for i in range(k):
@@ -1158,14 +1755,14 @@ def fligner(*args,**kwds):
         g.append(len(allZij))
 
     ranks = stats.rankdata(allZij)
-    a = distributions.norm.ppf(ranks/(2*(Ntot+1.0)) + 0.5)
+    a = distributions.norm.ppf(ranks/(2*(Ntot + 1.0)) + 0.5)
 
     # compute Aibar
-    Aibar = _apply_func(a,g,sum) / Ni
+    Aibar = _apply_func(a, g, sum) / Ni
     anbar = np.mean(a, axis=0)
-    varsq = np.var(a,axis=0, ddof=1)
-    Xsq = sum(Ni*(asarray(Aibar)-anbar)**2.0,axis=0)/varsq
-    pval = distributions.chi2.sf(Xsq,k-1)  # 1 - cdf
+    varsq = np.var(a, axis=0, ddof=1)
+    Xsq = sum(Ni*(asarray(Aibar) - anbar)**2.0, axis=0)/varsq
+    pval = distributions.chi2.sf(Xsq, k - 1)  # 1 - cdf
     return Xsq, pval
 
 
@@ -1191,7 +1788,7 @@ def mood(x, y, axis=0):
     -------
     z : scalar or ndarray
         The z-score for the hypothesis test.  For 1-D inputs a scalar is
-        returned;
+        returned.
     p-value : scalar ndarray
         The p-value for the hypothesis test.
 
@@ -1293,47 +1890,6 @@ def mood(x, y, axis=0):
     return z, pval
 
 
-def oneway(*args,**kwds):
-    """Test for equal means in two or more samples from the
-    normal distribution.
-
-    If the keyword parameter <equal_var> is true then the variances
-    are assumed to be equal, otherwise they are not assumed to
-    be equal (default).
-
-    Return test statistic and the p-value giving the probability
-    of error if the null hypothesis (equal means) is rejected at this value.
-    """
-    k = len(args)
-    if k < 2:
-        raise ValueError("Must enter at least two input sample vectors.")
-    if 'equal_var' in kwds:
-        if kwds['equal_var']:
-            evar = 1
-        else:
-            evar = 0
-    else:
-        evar = 0
-
-    Ni = array([len(args[i]) for i in range(k)])
-    Mi = array([np.mean(args[i], axis=0) for i in range(k)])
-    Vi = array([np.var(args[i]) for i in range(k)])
-    Wi = Ni / Vi
-    swi = sum(Wi,axis=0)
-    N = sum(Ni,axis=0)
-    my = sum(Mi*Ni,axis=0)*1.0/N
-    tmp = sum((1-Wi/swi)**2 / (Ni-1.0),axis=0)/(k*k-1.0)
-    if evar:
-        F = ((sum(Ni*(Mi-my)**2,axis=0) / (k-1.0)) / (sum((Ni-1.0)*Vi,axis=0) / (N-k)))
-        pval = distributions.f.sf(F,k-1,N-k)  # 1-cdf
-    else:
-        m = sum(Wi*Mi,axis=0)*1.0/swi
-        F = sum(Wi*(Mi-m)**2,axis=0) / ((k-1.0)*(1+2*(k-2)*tmp))
-        pval = distributions.f.sf(F,k-1.0,1.0/(3*tmp))
-
-    return F, pval
-
-
 def wilcoxon(x, y=None, zero_method="wilcox", correction=False):
     """
     Calculate the Wilcoxon signed-rank test.
@@ -1385,7 +1941,7 @@ def wilcoxon(x, y=None, zero_method="wilcox", correction=False):
 
     """
 
-    if not zero_method in ["wilcox", "pratt", "zsplit"]:
+    if zero_method not in ["wilcox", "pratt", "zsplit"]:
         raise ValueError("Zero method should be either 'wilcox' \
                           or 'pratt' or 'zsplit'")
 
@@ -1469,6 +2025,15 @@ def pdf_fromgamma(g1,g2,g3=0.0,g4=None):
     return thefunc
 
 
+def _circfuncs_common(samples, high, low):
+    samples = np.asarray(samples)
+    if samples.size == 0:
+        return np.nan, np.nan
+
+    ang = (samples - low)*2*pi / (high-low)
+    return samples, ang
+
+
 def circmean(samples, high=2*pi, low=0, axis=None):
     """
     Compute the circular mean for samples in a range.
@@ -1491,13 +2056,14 @@ def circmean(samples, high=2*pi, low=0, axis=None):
         Circular mean.
 
     """
-    ang = (samples - low)*2*pi / (high-low)
+    samples, ang = _circfuncs_common(samples, high, low)
     res = angle(np.mean(exp(1j*ang), axis=axis))
     mask = res < 0
     if (mask.ndim > 0):
         res[mask] += 2*pi
     elif mask:
         res = res + 2*pi
+
     return res*(high-low)/2.0/pi + low
 
 
@@ -1528,7 +2094,7 @@ def circvar(samples, high=2*pi, low=0, axis=None):
     angles returns a number close to the 'linear' variance.
 
     """
-    ang = (samples - low)*2*pi / (high-low)
+    samples, ang = _circfuncs_common(samples, high, low)
     res = np.mean(exp(1j*ang), axis=axis)
     R = abs(res)
     return ((high-low)/2.0/pi)**2 * 2 * log(1/R)
@@ -1563,7 +2129,7 @@ def circstd(samples, high=2*pi, low=0, axis=None):
     small angles returns a number close to the 'linear' standard deviation.
 
     """
-    ang = (samples - low)*2*pi / (high-low)
+    samples, ang = _circfuncs_common(samples, high, low)
     res = np.mean(exp(1j*ang), axis=axis)
     R = abs(res)
     return ((high-low)/2.0/pi) * sqrt(-2*log(R))

@@ -67,6 +67,7 @@ Decompositions
    cho_factor - Cholesky decomposition for use in solving a linear system
    cho_solve - Solve previously factored linear system
    cho_solve_banded - Solve previously factored banded linear system
+   polar - Compute the polar decomposition.
    qr - QR decomposition of a matrix
    qr_multiply - QR decomposition and multiplication by Q
    qz - QZ decomposition of a pair of matrices
@@ -74,15 +75,18 @@ Decompositions
    rsf2csf - Real to complex Schur form
    hessenberg - Hessenberg form of a matrix
 
+.. seealso::
+
+   `scipy.linalg.interpolative` -- Interpolative matrix decompositions
+
+
 Matrix Functions
 ================
 
 .. autosummary::
    :toctree: generated/
 
-   expm - Matrix exponential using Pade approximation with scaling and squaring
-   expm2 - Matrix exponential using eigenvalue decomposition
-   expm3 - Matrix exponential using Taylor-series expansion
+   expm - Matrix exponential
    logm - Matrix logarithm
    cosm - Matrix cosine
    sinm - Matrix sine
@@ -94,6 +98,7 @@ Matrix Functions
    sqrtm - Matrix square root
    funm - Evaluating an arbitrary matrix function
    expm_frechet - Frechet derivative of the matrix exponential
+   expm_cond - Relative condition number of expm in the Frobenius norm
    fractional_matrix_power - Fractional matrix power
 
 
@@ -119,6 +124,7 @@ Special Matrices
    block_diag - Construct a block diagonal matrix from submatrices
    circulant - Circulant matrix
    companion - Companion matrix
+   dft - Discrete Fourier transform matrix
    hadamard - Hadamard matrix of order 2**n
    hankel - Hankel matrix
    hilbert - Hilbert matrix
@@ -137,8 +143,12 @@ Low-level routines
    get_blas_funcs
    get_lapack_funcs
    find_best_blas_type
-   scipy.linalg.blas
-   scipy.linalg.lapack
+
+.. seealso::
+
+   `scipy.linalg.blas` -- Low-level BLAS functions
+
+   `scipy.linalg.lapack` -- Low-level LAPACK functions
 
 """
 
@@ -155,6 +165,7 @@ from .decomp_qr import *
 from ._decomp_qz import *
 from .decomp_svd import *
 from .decomp_schur import *
+from ._decomp_polar import *
 from .matfuncs import *
 from .blas import *
 from .lapack import *

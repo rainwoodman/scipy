@@ -4,15 +4,16 @@
 
 from __future__ import division, print_function, absolute_import
 
+import warnings
+
 import numpy as np
 
-from numpy.testing import TestCase, assert_equal, assert_array_equal, \
-     assert_, assert_allclose, assert_raises
+from numpy.testing import (TestCase, assert_equal, assert_array_equal,
+     assert_, assert_allclose, assert_raises, run_module_suite)
 
-from numpy import zeros, ones, arange, array, abs, max, ones, eye, iscomplexobj
-from numpy.linalg import cond
+from numpy import zeros, arange, array, abs, max, ones, eye, iscomplexobj
 from scipy.linalg import norm
-from scipy.sparse import spdiags, csr_matrix
+from scipy.sparse import spdiags, csr_matrix, SparseEfficiencyWarning
 
 from scipy.sparse.linalg import LinearOperator, aslinearoperator
 from scipy.sparse.linalg.isolve import cg, cgs, bicg, bicgstab, gmres, qmr, minres, lgmres
@@ -55,38 +56,55 @@ class IterativeParams(object):
         data[2,:] = -1
         Poisson1D = spdiags(data, [0,-1,1], N, N, format='csr')
         self.Poisson1D = Case("poisson1d", Poisson1D)
-        self.cases.append(self.Poisson1D)
+        self.cases.append(Case("poisson1d", Poisson1D))
+        # note: minres fails for single precision
+        self.cases.append(Case("poisson1d", Poisson1D.astype('f'),
+                               skip=[minres]))
 
         # Symmetric and Negative Definite
         self.cases.append(Case("neg-poisson1d", -Poisson1D,
                                skip=posdef_solvers))
+        # note: minres fails for single precision
+        self.cases.append(Case("neg-poisson1d", (-Poisson1D).astype('f'),
+                               skip=posdef_solvers + [minres]))
 
         # Symmetric and Indefinite
         data = array([[6, -5, 2, 7, -1, 10, 4, -3, -8, 9]],dtype='d')
         RandDiag = spdiags(data, [0], 10, 10, format='csr')
         self.cases.append(Case("rand-diag", RandDiag, skip=posdef_solvers))
+        self.cases.append(Case("rand-diag", RandDiag.astype('f'),
+                               skip=posdef_solvers))
 
         # Random real-valued
         np.random.seed(1234)
         data = np.random.rand(4, 4)
         self.cases.append(Case("rand", data, skip=posdef_solvers+sym_solvers))
+        self.cases.append(Case("rand", data.astype('f'),
+                               skip=posdef_solvers+sym_solvers))
 
         # Random symmetric real-valued
         np.random.seed(1234)
         data = np.random.rand(4, 4)
         data = data + data.T
         self.cases.append(Case("rand-sym", data, skip=posdef_solvers))
+        self.cases.append(Case("rand-sym", data.astype('f'),
+                               skip=posdef_solvers))
 
         # Random pos-def symmetric real
         np.random.seed(1234)
         data = np.random.rand(9, 9)
         data = np.dot(data.conj(), data.T)
         self.cases.append(Case("rand-sym-pd", data))
+        # note: minres fails for single precision
+        self.cases.append(Case("rand-sym-pd", data.astype('f'),
+                               skip=[minres]))
 
         # Random complex-valued
         np.random.seed(1234)
         data = np.random.rand(4, 4) + 1j*np.random.rand(4, 4)
         self.cases.append(Case("rand-cmplx", data,
+                               skip=posdef_solvers+sym_solvers+real_solvers))
+        self.cases.append(Case("rand-cmplx", data.astype('F'),
                                skip=posdef_solvers+sym_solvers+real_solvers))
 
         # Random hermitian complex-valued
@@ -95,12 +113,16 @@ class IterativeParams(object):
         data = data + data.T.conj()
         self.cases.append(Case("rand-cmplx-herm", data,
                                skip=posdef_solvers+real_solvers))
+        self.cases.append(Case("rand-cmplx-herm", data.astype('F'),
+                               skip=posdef_solvers+real_solvers))
 
         # Random pos-def hermitian complex-valued
         np.random.seed(1234)
         data = np.random.rand(9, 9) + 1j*np.random.rand(9, 9)
         data = np.dot(data.conj(), data.T)
         self.cases.append(Case("rand-cmplx-sym-pd", data, skip=real_solvers))
+        self.cases.append(Case("rand-cmplx-sym-pd", data.astype('F'),
+                               skip=real_solvers))
 
         # Non-symmetric and Positive Definite
         #
@@ -112,6 +134,11 @@ class IterativeParams(object):
         A = spdiags(data, [0,-1], 10, 10, format='csr')
         self.cases.append(Case("nonsymposdef", A,
                                skip=sym_solvers+[cgs, qmr, bicg]))
+        self.cases.append(Case("nonsymposdef", A.astype('F'),
+                               skip=sym_solvers+[cgs, qmr, bicg]))
+
+
+params = None
 
 
 def setup_module():
@@ -153,11 +180,14 @@ def assert_normclose(a, b, tol=1e-8):
 
 
 def check_convergence(solver, case):
-    tol = 1e-8
-
     A = case.A
 
-    b = arange(A.shape[0], dtype=float)
+    if A.dtype.char in "dD":
+        tol = 1e-8
+    else:
+        tol = 1e-2
+
+    b = arange(A.shape[0], dtype=A.dtype)
     x0 = 0*b
 
     x, info = solver(A, b, x0=x0, tol=tol)
@@ -258,40 +288,42 @@ class TestQMR(TestCase):
     def test_leftright_precond(self):
         """Check that QMR works with left and right preconditioners"""
 
-        from scipy.sparse.linalg.dsolve import splu
-        from scipy.sparse.linalg.interface import LinearOperator
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=SparseEfficiencyWarning)
+            from scipy.sparse.linalg.dsolve import splu
+            from scipy.sparse.linalg.interface import LinearOperator
 
-        n = 100
+            n = 100
 
-        dat = ones(n)
-        A = spdiags([-2*dat, 4*dat, -dat], [-1,0,1],n,n)
-        b = arange(n,dtype='d')
+            dat = ones(n)
+            A = spdiags([-2*dat, 4*dat, -dat], [-1,0,1],n,n)
+            b = arange(n,dtype='d')
 
-        L = spdiags([-dat/2, dat], [-1,0], n, n)
-        U = spdiags([4*dat, -dat], [0,1], n, n)
+            L = spdiags([-dat/2, dat], [-1,0], n, n)
+            U = spdiags([4*dat, -dat], [0,1], n, n)
 
-        L_solver = splu(L)
-        U_solver = splu(U)
+            L_solver = splu(L)
+            U_solver = splu(U)
 
-        def L_solve(b):
-            return L_solver.solve(b)
+            def L_solve(b):
+                return L_solver.solve(b)
 
-        def U_solve(b):
-            return U_solver.solve(b)
+            def U_solve(b):
+                return U_solver.solve(b)
 
-        def LT_solve(b):
-            return L_solver.solve(b,'T')
+            def LT_solve(b):
+                return L_solver.solve(b,'T')
 
-        def UT_solve(b):
-            return U_solver.solve(b,'T')
+            def UT_solve(b):
+                return U_solver.solve(b,'T')
 
-        M1 = LinearOperator((n,n), matvec=L_solve, rmatvec=LT_solve)
-        M2 = LinearOperator((n,n), matvec=U_solve, rmatvec=UT_solve)
+            M1 = LinearOperator((n,n), matvec=L_solve, rmatvec=LT_solve)
+            M2 = LinearOperator((n,n), matvec=U_solve, rmatvec=UT_solve)
 
-        x,info = qmr(A, b, tol=1e-8, maxiter=15, M1=M1, M2=M2)
+            x,info = qmr(A, b, tol=1e-8, maxiter=15, M1=M1, M2=M2)
 
-        assert_equal(info,0)
-        assert_normclose(A*x, b, tol=1e-8)
+            assert_equal(info,0)
+            assert_normclose(A*x, b, tol=1e-8)
 
 
 class TestGMRES(TestCase):
@@ -324,6 +356,6 @@ class TestGMRES(TestCase):
         assert_allclose(r_x, x)
         assert_(r_info == info)
 
+
 if __name__ == "__main__":
-    import nose
-    nose.run(argv=['', __file__])
+    run_module_suite()

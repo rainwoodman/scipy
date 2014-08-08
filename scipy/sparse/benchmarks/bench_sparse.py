@@ -2,16 +2,18 @@
 from __future__ import division, print_function, absolute_import
 
 import time
+import warnings
 
 import numpy
+import numpy as np
 from numpy import ones, array, asarray, empty
 
 from numpy.testing import *
 
 from scipy import sparse
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 from scipy.sparse import csr_matrix, coo_matrix, dia_matrix, lil_matrix, \
-        dok_matrix
+        dok_matrix, rand, SparseEfficiencyWarning
 
 
 def random_sparse(m,n,nnz_per_row):
@@ -76,7 +78,7 @@ class BenchmarkSparse(TestCase):
         fmt = space+'   %3s  | %17s |  %7.1f  '
 
         for format in ['csr']:
-            vars = dict([(var,mat.asformat(format)) for (var,name,mat) in matrices])
+            vars = dict([(var, mat.asformat(format)) for (var, _, mat) in matrices])
             for X,Y in [('A','A'),('A','B'),('B','A'),('B','B')]:
                 x,y = vars[X],vars[Y]
                 for op in ['__add__','__sub__','multiply','__div__','__mul__']:
@@ -288,6 +290,79 @@ class BenchmarkSparse(TestCase):
                     output += '| %5.1fms ' % (1000*t)
             print(output)
 
+    def _getset_bench(self, kernel, formats):
+        print('==========================================================')
+        print('      N | s.patt. |' + ''.join(' %7s |' % fmt for fmt in formats))
+        print('----------------------------------------------------------')
+
+        A = rand(1000, 1000, density=1e-5)
+
+        for N in [1, 10, 100, 1000, 10000]:
+            for spat in [False, True]:
+                # indices to assign to
+                i, j = [], []
+                while len(i) < N:
+                    n = N - len(i)
+                    ip = np.random.randint(0, A.shape[0], size=n)
+                    jp = np.random.randint(0, A.shape[1], size=n)
+                    i = np.r_[i, ip]
+                    j = np.r_[j, jp]
+                v = np.random.rand(n)
+
+                if N == 1:
+                    i = int(i)
+                    j = int(j)
+                    v = float(v)
+
+                times = []
+
+                for fmt in formats:
+                    if fmt == 'dok' and N > 500:
+                        times.append(None)
+                        continue
+
+                    base = A.asformat(fmt)
+
+                    m = base.copy()
+                    if spat:
+                        kernel(m, i, j, v)
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', SparseEfficiencyWarning)
+
+                        iter = 0
+                        total_time = 0
+                        while total_time < 0.2 and iter < 5000:
+                            if not spat:
+                                m = base.copy()
+                            a = time.clock()
+                            kernel(m, i, j, v)
+                            total_time += time.clock() - a
+                            iter += 1
+
+                    times.append(total_time/float(iter))
+
+                output = " %6d | %7s " % (N, "same" if spat else "change")
+                for t in times:
+                    if t is None:
+                        output += '|    n/a    '
+                    else:
+                        output += '| %5.2fms ' % (1e3*t)
+                print(output)
+
+    def bench_setitem(self):
+        def kernel(A, i, j, v):
+            A[i, j] = v
+        print()
+        print('           Sparse Matrix fancy __setitem__')
+        self._getset_bench(kernel, ['csr', 'csc', 'lil', 'dok'])
+
+    def bench_getitem(self):
+        def kernel(A, i, j, v=None):
+            A[i, j]
+        print()
+        print('           Sparse Matrix fancy __getitem__')
+        self._getset_bench(kernel, ['csr', 'csc', 'lil'])
 
 # class TestLarge(TestCase):
 #    def bench_large(self):

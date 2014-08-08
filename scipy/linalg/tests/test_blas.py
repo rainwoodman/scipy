@@ -15,8 +15,8 @@ Run tests if scipy is installed:
 import math
 
 import numpy as np
-from numpy.testing import TestCase, run_module_suite, assert_equal, \
-    assert_almost_equal, assert_array_almost_equal, assert_raises
+from numpy.testing import (TestCase, run_module_suite, assert_equal,
+    assert_almost_equal, assert_array_almost_equal, assert_raises, assert_)
 
 from scipy.linalg import _fblas as fblas, get_blas_funcs
 
@@ -443,6 +443,50 @@ class TestSyHe(TestCase):
         for f in _get_func('her2k', 'zc'):
             res = f(a=self.sigma_y, b=self.sigma_y, alpha=1.)
             assert_array_almost_equal(np.triu(res), 2.*np.diag([1, 1]))
+
+
+class TestTRMM(TestCase):
+    """Quick and simple tests for dtrmm."""
+    def setUp(self):
+        self.a = np.array([[1., 2., ],
+                           [-2., 1.]])
+        self.b = np.array([[3., 4., -1.],
+                           [5., 6., -2.]])
+
+    def test_ab(self):
+        f = getattr(fblas, 'dtrmm', None)
+        if f is not None:
+            result = f(1., self.a, self.b)
+            expected = np.array([[13., 16., -5.],
+                                 [5., 6., -2.]])  # default a is upper triangular
+            assert_array_almost_equal(result, expected)
+
+    def test_ab_lower(self):
+        f = getattr(fblas, 'dtrmm', None)
+        if f is not None:
+            result = f(1., self.a, self.b, lower=True)
+            expected = np.array([[3., 4., -1.],
+                                 [-1., -2., 0.]])  # now a is lower triangular
+            assert_array_almost_equal(result, expected)
+
+    def test_b_overwrites(self):
+        # BLAS dtrmm modifies B argument in-place.
+        # Here the default is to copy, but this can be overridden
+        f = getattr(fblas, 'dtrmm', None)
+        if f is not None:
+            for overwr in [True, False]:
+                bcopy = self.b.copy()
+                result = f(1., self.a, bcopy, overwrite_b=overwr)
+                # C-contiguous arrays are copied
+                assert_(bcopy.flags.f_contiguous is False and
+                        np.may_share_memory(bcopy, result) is False)
+                assert_equal(bcopy, self.b)
+
+            bcopy = np.asfortranarray(self.b.copy())  # or just transpose it
+            result = f(1., self.a, bcopy, overwrite_b=True)
+            assert_(bcopy.flags.f_contiguous is True and
+                    np.may_share_memory(bcopy, result) is True)
+            assert_array_almost_equal(bcopy, result)
 
 
 if __name__ == "__main__":

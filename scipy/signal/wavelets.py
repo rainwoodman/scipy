@@ -93,11 +93,6 @@ def qmf(hk):
     return hk[::-1] * np.array(asgn)
 
 
-def wavedec(amn, hk):
-    gk = qmf(hk)
-    return NotImplemented
-
-
 def cascade(hk, J=7):
     """
     Return (x, phi, psi) at dyadic points ``K/2**J`` from filter coefficients.
@@ -270,9 +265,9 @@ def ricker(points, a):
 
     It models the function:
 
-        ``A (1 - x^2/a^2) exp(-t^2/a^2)``,
+        ``A (1 - x^2/a^2) exp(-x^2/2 a^2)``,
 
-    where ``A = 2/sqrt(3a)pi^1/3``.
+    where ``A = 2/sqrt(3a)pi^1/4``.
 
     Parameters
     ----------
@@ -304,9 +299,9 @@ def ricker(points, a):
     A = 2 / (np.sqrt(3 * a) * (np.pi**0.25))
     wsq = a**2
     vec = np.arange(0, points) - (points - 1.0) / 2
-    tsq = vec**2
-    mod = (1 - tsq / wsq)
-    gauss = np.exp(-tsq / (2 * wsq))
+    xsq = vec**2
+    mod = (1 - xsq / wsq)
+    gauss = np.exp(-xsq / (2 * wsq))
     total = A * mod * gauss
     return total
 
@@ -342,16 +337,20 @@ def cwt(data, wavelet, widths):
     Notes
     -----
     >>> length = min(10 * width[ii], len(data))
-    >>> cwt[ii,:] = scipy.signal.convolve(data, wavelet(width[ii],
-    ...                                       length), mode='same')
+    >>> cwt[ii,:] = scipy.signal.convolve(data, wavelet(length,
+    ...                                       width[ii]), mode='same')
 
     Examples
     --------
     >>> from scipy import signal
-    >>> sig = np.random.rand(20) - 0.5
-    >>> wavelet = signal.ricker
-    >>> widths = np.arange(1, 11)
-    >>> cwtmatr = signal.cwt(sig, wavelet, widths)
+    >>> import matplotlib.pyplot as plt
+    >>> t = np.linspace(-1, 1, 200, endpoint=False)
+    >>> sig  = np.cos(2 * np.pi * 7 * t) + signal.gausspulse(t - 0.4, fc=2)
+    >>> widths = np.arange(1, 31)
+    >>> cwtmatr = signal.cwt(sig, signal.ricker, widths)
+    >>> plt.imshow(cwtmatr, extent=[-1, 1, 1, 31], cmap='PRGn', aspect='auto',
+    ...            vmax=abs(cwtmatr).max(), vmin=-abs(cwtmatr).max())
+    >>> plt.show()
 
     """
     output = np.zeros([len(widths), len(data)])

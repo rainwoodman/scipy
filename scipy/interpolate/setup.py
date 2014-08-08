@@ -6,25 +6,33 @@ from os.path import join
 
 def configuration(parent_package='',top_path=None):
     from numpy.distutils.misc_util import Configuration
+    from numpy.distutils.system_info import get_info
+
+    lapack_opt = get_info('lapack_opt', notfound_action=2)
 
     config = Configuration('interpolate', parent_package, top_path)
 
-    config.add_library('fitpack',
-                       sources=[join('fitpack', '*.f')],
-                       )
+    fitpack_src = [join('fitpack', '*.f')]
+    config.add_library('fitpack', sources=fitpack_src)
 
     config.add_extension('interpnd',
                          sources=['interpnd.c'])
 
+    config.add_extension('_ppoly',
+                         sources=['_ppoly.c'],
+                         **lapack_opt)
+
     config.add_extension('_fitpack',
                          sources=['src/_fitpackmodule.c'],
                          libraries=['fitpack'],
-                         depends=['src/__fitpack.h','src/multipack.h']
+                         depends=(['src/__fitpack.h','src/multipack.h']
+                                  + fitpack_src)
                          )
 
     config.add_extension('dfitpack',
                          sources=['src/fitpack.pyf'],
                          libraries=['fitpack'],
+                         depends=fitpack_src,
                          )
 
     config.add_extension('_interpolate',

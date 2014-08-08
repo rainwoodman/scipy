@@ -6,7 +6,7 @@ from __future__ import division, print_function, absolute_import
 
 from numpy.testing import assert_, dec, TestCase, run_module_suite
 
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 from scipy.optimize import nonlin, root
 from numpy import matrix, diag, dot
 from numpy.linalg import inv
@@ -41,6 +41,12 @@ def F2(x):
 F2.xin = [1,2,3,4,5,6]
 F2.KNOWN_BAD = {'linearmixing': nonlin.linearmixing,
                 'excitingmixing': nonlin.excitingmixing}
+
+
+def F2_lucky(x):
+    return x
+F2_lucky.xin = [0,0,0,0,0,0]
+F2_lucky.KNOWN_BAD = {}
 
 
 def F3(x):
@@ -80,6 +86,7 @@ F6.KNOWN_BAD = {'excitingmixing': nonlin.excitingmixing,
                 'linearmixing': nonlin.linearmixing,
                 'diagbroyden': nonlin.diagbroyden}
 
+
 #-------------------------------------------------------------------------------
 # Tests
 #-------------------------------------------------------------------------------
@@ -109,7 +116,7 @@ class TestNonlin(object):
 
     def test_problem_nonlin(self):
         """ Tests for nonlin functions """
-        for f in [F, F2, F3, F4_powell, F5, F6]:
+        for f in [F, F2, F2_lucky, F3, F4_powell, F5, F6]:
             for func in SOLVERS.values():
                 if func in f.KNOWN_BAD.values():
                     if func in MUST_WORK.values():
@@ -119,7 +126,7 @@ class TestNonlin(object):
 
     def test_problem_root(self):
         """ Tests for root """
-        for f in [F, F2, F3, F4_powell, F5, F6]:
+        for f in [F, F2, F2_lucky, F3, F4_powell, F5, F6]:
             for meth in SOLVERS:
                 if meth in f.KNOWN_BAD:
                     if meth in MUST_WORK:

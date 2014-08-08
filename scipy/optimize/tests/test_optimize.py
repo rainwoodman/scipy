@@ -11,11 +11,13 @@ To run it in its simplest form::
 """
 from __future__ import division, print_function, absolute_import
 
-from numpy.testing import assert_raises, assert_allclose, \
-        assert_equal, assert_, TestCase, run_module_suite, dec
+import warnings
+
+import numpy as np
+from numpy.testing import (assert_raises, assert_allclose, assert_equal,
+                           assert_, TestCase, run_module_suite, dec)
 
 from scipy import optimize
-import numpy as np
 
 
 class TestOptimize(object):
@@ -102,7 +104,7 @@ class TestOptimize(object):
                                     options=opts)
 
             params, fopt, gopt, Hopt, func_calls, grad_calls, warnflag = \
-                    res['x'], res['fun'], res['jac'], res['hess'], \
+                    res['x'], res['fun'], res['jac'], res['hess_inv'], \
                     res['nfev'], res['njev'], res['status']
         else:
             retval = optimize.fmin_bfgs(self.func, self.startparams, self.grad,
@@ -130,12 +132,9 @@ class TestOptimize(object):
         func = lambda x: x
         fprime = lambda x: np.ones_like(x)
         x0 = [np.nan]
-        olderr = np.seterr(over='ignore')
-        try:
+        with np.errstate(over='ignore', invalid='ignore'):
             x = optimize.fmin_bfgs(func, x0, fprime, disp=False)
             assert_(np.isnan(func(x)))
-        finally:
-            np.seterr(**olderr)
 
     def test_bfgs_numerical_jacobian(self):
         """ BFGS with numerical jacobian and a vector epsilon parameter """
@@ -165,6 +164,15 @@ class TestOptimize(object):
             assert_(not np.isfinite(func(x)))
         finally:
             np.seterr(**olderr)
+
+    def test_bfgs_gh_2169(self):
+        def f(x):
+            if x < 0:
+                return 1.79769313e+308
+            else:
+                return x + 1./x
+        xs = optimize.fmin_bfgs(f, [10.], disp=False)
+        assert_allclose(xs, 1.0, rtol=1e-4, atol=1e-4)
 
     def test_powell(self, use_wrapper=False):
         """ Powell (direction set) optimization routine
@@ -263,7 +271,7 @@ class TestOptimize(object):
         # Ensure that function call counts are 'known good'; these are from
         # Scipy 0.7.0. Don't allow them to increase.
         assert_(self.funccalls == 7, self.funccalls)
-        assert_(self.gradcalls <= 20, self.gradcalls)  # 0.13.0
+        assert_(self.gradcalls <= 22, self.gradcalls)  # 0.13.0
         #assert_(self.gradcalls <= 18, self.gradcalls) # 0.9.0
         #assert_(self.gradcalls == 18, self.gradcalls) # 0.8.0
         #assert_(self.gradcalls == 22, self.gradcalls) # 0.7.0
@@ -392,11 +400,18 @@ class TestOptimize(object):
     def test_minimize_l_bfgs_b(self):
         """ Minimize with L-BFGS-B method """
         opts = {'disp': False, 'maxiter': self.maxiter}
-        x = optimize.minimize(self.func, self.startparams,
+        r = optimize.minimize(self.func, self.startparams,
                               method='L-BFGS-B', jac=self.grad,
-                              options=opts)['x']
-        assert_allclose(self.func(x), self.func(self.solution),
+                              options=opts)
+        assert_allclose(self.func(r.x), self.func(self.solution),
                         atol=1e-6)
+        # approximate jacobian
+        ra = optimize.minimize(self.func, self.startparams,
+                               method='L-BFGS-B', options=opts)
+        assert_allclose(self.func(ra.x), self.func(self.solution),
+                        atol=1e-6)
+        # check that function evaluations in approximate jacobian are counted
+        assert_(ra.nfev > r.nfev)
 
     def test_minimize_l_bfgs_b_ftol(self):
         # Check that the `ftol` parameter in l_bfgs_b works as expected
@@ -414,6 +429,44 @@ class TestOptimize(object):
                 assert_(v < v0)
 
             assert_allclose(v, self.func(self.solution), rtol=tol)
+
+    def test_custom(self):
+        # This function comes from the documentation example.
+        def custmin(fun, x0, args=(), maxfev=None, stepsize=0.1,
+                maxiter=100, callback=None, **options):
+            bestx = x0
+            besty = fun(x0)
+            funcalls = 1
+            niter = 0
+            improved = True
+            stop = False
+
+            while improved and not stop and niter < maxiter:
+                improved = False
+                niter += 1
+                for dim in range(np.size(x0)):
+                    for s in [bestx[dim] - stepsize, bestx[dim] + stepsize]:
+                        testx = np.copy(bestx)
+                        testx[dim] = s
+                        testy = fun(testx, *args)
+                        funcalls += 1
+                        if testy < besty:
+                            besty = testy
+                            bestx = testx
+                            improved = True
+                    if callback is not None:
+                        callback(bestx)
+                    if maxfev is not None and funcalls >= maxfev:
+                        stop = True
+                        break
+
+            return optimize.OptimizeResult(fun=besty, x=bestx, nit=niter,
+                                           nfev=funcalls, success=(niter > 1))
+
+        x0 = [1.35, 0.9, 0.8, 1.1, 1.2]
+        res = optimize.minimize(optimize.rosen, x0, method=custmin,
+                                options=dict(stepsize=0.05))
+        assert_allclose(res.x, 1.0, rtol=1e-4, atol=1e-4)
 
     def test_minimize(self):
         """Tests for the minimize wrapper."""
@@ -433,6 +486,8 @@ class TestOptimize(object):
         self.test_neldermead(True)
         self.setUp()
         self.test_powell(True)
+        self.setUp()
+        self.test_custom()
 
     def test_minimize_tol_parameter(self):
         # Check that the minimize() tol= argument does something
@@ -451,12 +506,16 @@ class TestOptimize(object):
                 jac = None
             else:
                 jac = dfunc
-            sol1 = optimize.minimize(func, [1,1], jac=jac, tol=1e-10,
-                                     method=method)
-            sol2 = optimize.minimize(func, [1,1], jac=jac, tol=1.0,
-                                     method=method)
-            assert_(func(sol1.x) < func(sol2.x),
-                    "%s: %s vs. %s" % (method, func(sol1.x), func(sol2.x)))
+
+            with warnings.catch_warnings():
+                # suppress deprecation warning for 'anneal'
+                warnings.filterwarnings('ignore', category=DeprecationWarning)
+                sol1 = optimize.minimize(func, [1,1], jac=jac, tol=1e-10,
+                                         method=method)
+                sol2 = optimize.minimize(func, [1,1], jac=jac, tol=1.0,
+                                         method=method)
+                assert_(func(sol1.x) < func(sol2.x),
+                        "%s: %s vs. %s" % (method, func(sol1.x), func(sol2.x)))
 
     def test_no_increase(self):
         # Check that the solver doesn't return a value worse than the
@@ -484,9 +543,48 @@ class TestOptimize(object):
             assert_(func(sol.x) <= f0)
 
         for method in ['nelder-mead', 'powell', 'cg', 'bfgs',
-                       'newton-cg', 'anneal', 'l-bfgs-b', 'tnc',
+                       'newton-cg', 'l-bfgs-b', 'tnc',
                        'cobyla', 'slsqp']:
             yield check, method
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=DeprecationWarning)
+            yield check, 'anneal'
+
+    def test_slsqp_respect_bounds(self):
+        # github issue 3108
+        def f(x):
+            return sum((x - np.array([1., 2., 3., 4.]))**2)
+
+        def cons(x):
+            a = np.array([[-1, -1, -1, -1], [-3, -3, -2, -1]])
+            return np.concatenate([np.dot(a, x) + np.array([5, 10]), x])
+
+        x0 = np.array([0.5, 1., 1.5, 2.])
+        res = optimize.minimize(f, x0, method='slsqp',
+                                constraints={'type': 'ineq', 'fun': cons})
+        assert_allclose(res.x, np.array([0., 2, 5, 8])/3, atol=1e-12)
+
+    def test_minimize_automethod(self):
+        def f(x):
+            return x**2
+
+        def cons(x):
+            return x - 2
+
+        x0 = np.array([10.])
+        sol_0 = optimize.minimize(f, x0)
+        sol_1 = optimize.minimize(f, x0, constraints=[{'type': 'ineq', 'fun': cons}])
+        sol_2 = optimize.minimize(f, x0, bounds=[(5, 10)])
+        sol_3 = optimize.minimize(f, x0, constraints=[{'type': 'ineq', 'fun': cons}], bounds=[(5, 10)])
+        sol_4 = optimize.minimize(f, x0, constraints=[{'type': 'ineq', 'fun': cons}], bounds=[(1, 10)])
+        for sol in [sol_0, sol_1, sol_2, sol_3, sol_4]:
+            assert_(sol.success)
+        assert_allclose(sol_0.x, 0, atol=1e-8)
+        assert_allclose(sol_1.x, 2, atol=1e-8)
+        assert_allclose(sol_2.x, 5, atol=1e-8)
+        assert_allclose(sol_3.x, 5, atol=1e-8)
+        assert_allclose(sol_4.x, 2, atol=1e-8)
 
 
 class TestLBFGSBBounds(TestCase):
@@ -635,6 +733,40 @@ class TestOptimizeScalar(TestCase):
         x = optimize.minimize_scalar(self.fun, bounds=(1, np.array(5)),
                                      method='bounded').x
         assert_allclose(x, self.solution, atol=1e-6)
+
+    def test_minimize_scalar_custom(self):
+        # This function comes from the documentation example.
+        def custmin(fun, bracket, args=(), maxfev=None, stepsize=0.1,
+                maxiter=100, callback=None, **options):
+            bestx = (bracket[1] + bracket[0]) / 2.0
+            besty = fun(bestx)
+            funcalls = 1
+            niter = 0
+            improved = True
+            stop = False
+
+            while improved and not stop and niter < maxiter:
+                improved = False
+                niter += 1
+                for testx in [bestx - stepsize, bestx + stepsize]:
+                    testy = fun(testx, *args)
+                    funcalls += 1
+                    if testy < besty:
+                        besty = testy
+                        bestx = testx
+                        improved = True
+                if callback is not None:
+                    callback(bestx)
+                if maxfev is not None and funcalls >= maxfev:
+                    stop = True
+                    break
+
+            return optimize.OptimizeResult(fun=besty, x=bestx, nit=niter,
+                                           nfev=funcalls, success=(niter > 1))
+
+        res = optimize.minimize_scalar(self.fun, bracket=(0, 4), method=custmin,
+                                       options=dict(stepsize=0.05))
+        assert_allclose(res.x, self.solution, atol=1e-6)
 
 
 class TestNewtonCg(object):

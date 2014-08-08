@@ -11,7 +11,7 @@ import numpy as np
 import math
 import warnings
 
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 
 
 class AccuracyWarning(Warning):
@@ -22,7 +22,8 @@ def fixed_quad(func,a,b,args=(),n=5):
     """
     Compute a definite integral using fixed-order Gaussian quadrature.
 
-    Integrate `func` from a to b using Gaussian quadrature of order n.
+    Integrate `func` from `a` to `b` using Gaussian quadrature of
+    order `n`.
 
     Parameters
     ----------
@@ -45,12 +46,15 @@ def fixed_quad(func,a,b,args=(),n=5):
     See Also
     --------
     quad : adaptive quadrature using QUADPACK
-    dblquad, tplquad : double and triple integrals
+    dblquad : double integrals
+    tplquad : triple integrals
     romberg : adaptive Romberg quadrature
     quadrature : adaptive Gaussian quadrature
-    romb, simps, trapz : integrators for sampled data
+    romb : integrators for sampled data
+    simps : integrators for sampled data
     cumtrapz : cumulative integration for sampled data
-    ode, odeint - ODE integrators
+    ode : ODE integrator
+    odeint : ODE integrator
 
     """
     [x,w] = p_roots(n)
@@ -111,7 +115,7 @@ def vectorize1(func, args=(), vec_func=False):
 
 
 def quadrature(func, a, b, args=(), tol=1.49e-8, rtol=1.49e-8, maxiter=50,
-               vec_func=True):
+               vec_func=True, miniter=1):
     """
     Compute a definite integral using fixed-tolerance Gaussian quadrature.
 
@@ -132,10 +136,12 @@ def quadrature(func, a, b, args=(), tol=1.49e-8, rtol=1.49e-8, maxiter=50,
         Iteration stops when error between last two iterates is less than
         `tol` OR the relative change is less than `rtol`.
     maxiter : int, optional
-        Maximum number of iterations.
+        Maximum order of Gaussian quadrature.
     vec_func : bool, optional
         True or False if func handles arrays as arguments (is
         a "vector" function). Default is True.
+    miniter : int, optional
+        Minimum order of Gaussian quadrature.
 
     Returns
     -------
@@ -158,10 +164,13 @@ def quadrature(func, a, b, args=(), tol=1.49e-8, rtol=1.49e-8, maxiter=50,
     odeint: ODE integrator
 
     """
+    if not isinstance(args, tuple):
+        args = (args,)
     vfunc = vectorize1(func, args, vec_func=vec_func)
     val = np.inf
     err = np.inf
-    for n in xrange(1, maxiter+1):
+    maxiter = max(miniter+1, maxiter)
+    for n in xrange(miniter, maxiter+1):
         newval = fixed_quad(vfunc, a, b, (), n)[0]
         err = abs(newval-val)
         val = newval
@@ -226,6 +235,8 @@ def cumtrapz(y, x=None, dx=1.0, axis=-1, initial=None):
     Examples
     --------
     >>> from scipy import integrate
+    >>> import matplotlib.pyplot as plt
+
     >>> x = np.linspace(-2, 2, num=20)
     >>> y = x
     >>> y_int = integrate.cumtrapz(y, x, initial=0)
@@ -237,7 +248,22 @@ def cumtrapz(y, x=None, dx=1.0, axis=-1, initial=None):
     if x is None:
         d = dx
     else:
-        d = diff(x, axis=axis)
+        x = asarray(x)
+        if x.ndim == 1:
+            d = diff(x)
+            # reshape to correct shape
+            shape = [1] * y.ndim
+            shape[axis] = -1
+            d = d.reshape(shape)
+        elif len(x.shape) != len(y.shape):
+            raise ValueError("If given, shape of x must be 1-d or the "
+                    "same as y.")
+        else:
+            d = diff(x, axis=axis)
+
+        if d.shape[axis] != y.shape[axis] - 1:
+            raise ValueError("If given, length of x along axis must be the "
+                             "same as y.")
 
     nd = len(y.shape)
     slice1 = tupleset((slice(None),)*nd, axis, slice(1, None))
@@ -344,7 +370,7 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
     last_dx = dx
     first_dx = dx
     returnshape = 0
-    if not x is None:
+    if x is not None:
         x = asarray(x)
         if len(x.shape) == 1:
             shapex = ones(nd)
@@ -363,13 +389,13 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
         result = 0.0
         slice1 = (slice(None),)*nd
         slice2 = (slice(None),)*nd
-        if not even in ['avg', 'last', 'first']:
+        if even not in ['avg', 'last', 'first']:
             raise ValueError("Parameter 'even' must be 'avg', 'last', or 'first'.")
         # Compute using Simpson's rule on first intervals
         if even in ['avg', 'first']:
             slice1 = tupleset(slice1, axis, -1)
             slice2 = tupleset(slice2, axis, -2)
-            if not x is None:
+            if x is not None:
                 last_dx = x[slice1] - x[slice2]
             val += 0.5*last_dx*(y[slice1]+y[slice2])
             result = _basic_simps(y,0,N-3,x,dx,axis)
@@ -377,7 +403,7 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
         if even in ['avg', 'last']:
             slice1 = tupleset(slice1, axis, 0)
             slice2 = tupleset(slice2, axis, 1)
-            if not x is None:
+            if x is not None:
                 first_dx = x[tuple(slice2)] - x[tuple(slice1)]
             val += 0.5*first_dx*(y[slice2]+y[slice1])
             result += _basic_simps(y,1,N-2,x,dx,axis)
@@ -397,33 +423,35 @@ def romb(y, dx=1.0, axis=-1, show=False):
     Romberg integration using samples of a function.
 
     Parameters
-    -----------
+    ----------
     y : array_like
         A vector of ``2**k + 1`` equally-spaced samples of a function.
     dx : array_like, optional
         The sample spacing. Default is 1.
-    axis : array_like?, optional
+    axis : int, optional
         The axis along which to integrate. Default is -1 (last axis).
     show : bool, optional
-           When y is a single 1-D array, then if this argument is True
-           print the table showing Richardson extrapolation from the
-           samples. Default is False.
+        When `y` is a single 1-D array, then if this argument is True
+        print the table showing Richardson extrapolation from the
+        samples. Default is False.
 
     Returns
     -------
-    ret : array_like?
-        The integrated result for each axis.
+    romb : ndarray
+        The integrated result for `axis`.
 
     See also
     --------
-    quad - adaptive quadrature using QUADPACK
-    romberg - adaptive Romberg quadrature
-    quadrature - adaptive Gaussian quadrature
-    fixed_quad - fixed-order Gaussian quadrature
-    dblquad, tplquad - double and triple integrals
-    simps, trapz - integrators for sampled data
-    cumtrapz - cumulative integration for sampled data
-    ode, odeint - ODE integrators
+    quad : adaptive quadrature using QUADPACK
+    romberg : adaptive Romberg quadrature
+    quadrature : adaptive Gaussian quadrature
+    fixed_quad : fixed-order Gaussian quadrature
+    dblquad : double integrals
+    tplquad : triple integrals
+    simps : integrators for sampled data
+    cumtrapz : cumulative integration for sampled data
+    ode : ODE integrators
+    odeint : ODE integrators
 
     """
     y = asarray(y)
@@ -555,8 +583,8 @@ def romberg(function, a, b, args=(), tol=1.48e-8, rtol=1.48e-8, show=False,
     over the interval (`a`, `b`).
 
     If `show` is 1, the triangular array of the intermediate results
-    will be printed.  If `vec_func` is True (default is False), then `function` is
-    assumed to support vector arguments.
+    will be printed.  If `vec_func` is True (default is False), then
+    `function` is assumed to support vector arguments.
 
     Parameters
     ----------
@@ -568,7 +596,7 @@ def romberg(function, a, b, args=(), tol=1.48e-8, rtol=1.48e-8, show=False,
         Upper limit of integration.
 
     Returns
-    --------
+    -------
     results  : float
         Result of the integration.
 
@@ -592,10 +620,13 @@ def romberg(function, a, b, args=(), tol=1.48e-8, rtol=1.48e-8, show=False,
     --------
     fixed_quad : Fixed-order Gaussian quadrature.
     quad : Adaptive quadrature using QUADPACK.
-    dblquad, tplquad : Double and triple integrals.
-    romb, simps, trapz : Integrators for sampled data.
+    dblquad : Double integrals.
+    tplquad : Triple integrals.
+    romb : Integrators for sampled data.
+    simps : Integrators for sampled data.
     cumtrapz : Cumulative integration for sampled data.
-    ode, odeint : ODE integrators.
+    ode : ODE integrator.
+    odeint : ODE integrator.
 
     References
     ----------
@@ -605,10 +636,11 @@ def romberg(function, a, b, args=(), tol=1.48e-8, rtol=1.48e-8, show=False,
     --------
     Integrate a gaussian from 0 to 1 and compare to the error function.
 
+    >>> from scipy import integrate
     >>> from scipy.special import erf
     >>> gaussian = lambda x: 1/np.sqrt(np.pi) * np.exp(-x**2)
-    >>> result = romberg(gaussian, 0, 1, show=True)
-    Romberg integration of <function vfunc at 0x101eceaa0> from [0, 1]
+    >>> result = integrate.romberg(gaussian, 0, 1, show=True)
+    Romberg integration of <function vfunc at ...> from [0, 1]
 
     ::
 
@@ -623,7 +655,7 @@ def romberg(function, a, b, args=(), tol=1.48e-8, rtol=1.48e-8, show=False,
     The final result is 0.421350396475 after 33 function evaluations.
 
     >>> print("%g %g" % (2*result, erf(1)))
-    0.84270079295 0.84270079295
+    0.842701 0.842701
 
     """
     if isinf(a) or isinf(b):
@@ -781,12 +813,11 @@ def newton_cotes(rn, equal=0):
     yi = rn / float(N)
     ti = 2.0*yi - 1
     nvec = np.arange(0,N+1)
-    C = np.mat(ti**nvec[:,np.newaxis])
-    Cinv = C.I
+    C = ti**nvec[:,np.newaxis]
+    Cinv = np.linalg.inv(C)
     # improve precision of result
-    Cinv = 2*Cinv - Cinv*C*Cinv
-    Cinv = 2*Cinv - Cinv*C*Cinv
-    Cinv = Cinv.A
+    for i in range(2):
+        Cinv = 2*Cinv - Cinv.dot(C).dot(Cinv)
     vec = 2.0 / (nvec[::2]+1)
     ai = np.dot(Cinv[:,::2],vec) * N/2
 

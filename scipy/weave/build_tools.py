@@ -230,14 +230,14 @@ def build_extension(module_path,compiler_name='',build_dir=None,
 
     # configure temp and build directories
     temp_dir = configure_temp_dir(temp_dir)
-    build_dir = configure_build_dir(module_dir)
+    build_dir = configure_build_dir(build_dir or module_dir)
 
     # dag. We keep having to add directories to the path to keep
     # object files separated from each other.  gcc2.x and gcc3.x C++
     # object files are not compatible, so we'll stick them in a sub
-    # dir based on their version.  This will add an md5 check sum
-    # of the compiler binary to the directory name to keep objects
-    # from different compilers in different locations.
+    # dir based on their version. This will add a SHA-256 check sum
+    # (truncated to 32 characters) of the compiler binary to the directory
+    # name to keep objects from different compilers in different locations.
 
     compiler_dir = platform_info.get_compiler_dir(compiler_name)
     temp_dir = os.path.join(temp_dir,compiler_dir)
@@ -266,6 +266,11 @@ def build_extension(module_path,compiler_name='',build_dir=None,
         old_SysExit = builtin.__dict__['SystemExit']
         builtin.__dict__['SystemExit'] = CompileError
 
+        # change current working directory to 'build_dir' so compiler won't
+        # pick up anything by mistake
+        oldcwd = os.path.abspath(os.getcwd())
+        os.chdir(build_dir)
+
         # distutils for MSVC messes with the environment, so we save the
         # current state and restore them afterward.
         import copy
@@ -277,6 +282,8 @@ def build_extension(module_path,compiler_name='',build_dir=None,
             os.environ = environ
             # restore SystemExit
             builtin.__dict__['SystemExit'] = old_SysExit
+            # restore working directory to one before setup
+            os.chdir(oldcwd)
         t2 = time.time()
 
         if verbose == 1:
@@ -412,7 +419,7 @@ def configure_temp_dir(temp_dir=None):
               temp_dir)
         temp_dir = tempfile.gettempdir()
 
-    # final check that that directories are writable.
+    # Final check that directories are writable.
     if not os.access(temp_dir,os.W_OK):
         msg = "Either the temp or build directory wasn't writable. Check" \
               " these locations: '%s'" % temp_dir
@@ -430,9 +437,9 @@ def configure_build_dir(build_dir=None):
         build_dir = None
 
     if build_dir is None:
-        # default to building in the home directory of the given module.
+        # Default to building in the home directory of the given module.
         build_dir = os.curdir
-        # if it doesn't work use the current directory.  This should always
+        # If it doesn't work use the current directory. This should always
         # be writable.
         if not os.access(build_dir,os.W_OK):
             print("warning:, neither the module's directory nor the "
@@ -440,7 +447,7 @@ def configure_build_dir(build_dir=None):
                   "directory.")
             build_dir = tempfile.gettempdir()
 
-    # final check that that directories are writable.
+    # Final check that directories are writable.
     if not os.access(build_dir,os.W_OK):
         msg = "The build directory wasn't writable. Check" \
               " this location: '%s'" % build_dir

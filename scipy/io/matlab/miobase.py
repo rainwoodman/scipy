@@ -8,6 +8,10 @@ MATLAB is a registered trademark of the Mathworks inc.
 from __future__ import division, print_function, absolute_import
 
 import sys
+import operator
+
+from scipy.lib.six import reduce
+
 import numpy as np
 
 if sys.version_info[0] >= 3:
@@ -30,6 +34,7 @@ class MatWriteError(Exception):
 
 class MatReadWarning(UserWarning):
     pass
+
 
 doc_dict = \
     {'file_arg':
@@ -76,7 +81,7 @@ matlab_compatible : bool, optional
          '''do_compression : bool, optional
    Whether to compress matrices on write. Default is False.''',
      'oned_as':
-         '''oned_as : {'column', 'row'}, optional
+         '''oned_as : {'row', 'column'}, optional
    If 'column', write 1-D numpy arrays as column vectors.
    If 'row', write 1D numpy arrays as row vectors.''',
      'unicode_strings':
@@ -293,11 +298,11 @@ def matdims(arr, oned_as='column'):
     ValueError: 1D option "bizarre" is strange
 
     """
-    if arr.size == 0:  # empty
-        return (0,) * np.max([arr.ndim, 2])
     shape = arr.shape
     if shape == ():  # scalar
         return (1,1)
+    if reduce(operator.mul, shape) == 0:  # zero elememts
+        return (0,) * np.max([arr.ndim, 2])
     if len(shape) == 1:  # 1D
         if oned_as == 'column':
             return shape + (1,)
@@ -340,7 +345,8 @@ class MatFileReader(object):
                  squeeze_me=False,
                  chars_as_strings=True,
                  matlab_compatible=False,
-                 struct_as_record=True
+                 struct_as_record=True,
+                 verify_compressed_data_integrity=True
                  ):
         '''
         Initializer for mat file reader
@@ -364,6 +370,7 @@ class MatFileReader(object):
             self.squeeze_me = squeeze_me
             self.chars_as_strings = chars_as_strings
             self.mat_dtype = mat_dtype
+        self.verify_compressed_data_integrity = verify_compressed_data_integrity
 
     def set_matlab_compatible(self):
         ''' Sets options to return arrays as MATLAB loads them '''

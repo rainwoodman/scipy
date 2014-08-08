@@ -244,10 +244,10 @@ def get_lapack_funcs(names, arrays=(), dtype=None):
     Parameters
     ----------
     names : str or sequence of str
-        Name(s) of LAPACK functions withouth type prefix.
+        Name(s) of LAPACK functions without type prefix.
 
-    arrays : sequency of ndarrays, optional
-        Arrays can be given to determine optiomal prefix of LAPACK
+    arrays : sequence of ndarrays, optional
+        Arrays can be given to determine optimal prefix of LAPACK
         routines. If not given, double-precision routines will be
         used, otherwise the most generic type in arrays will be used.
 
@@ -263,7 +263,7 @@ def get_lapack_funcs(names, arrays=(), dtype=None):
 
     Notes
     -----
-    This routines automatically chooses between Fortran/C
+    This routine automatically chooses between Fortran/C
     interfaces. Fortran code is used whenever possible for arrays with
     column major order. In all other cases, C code is preferred.
 

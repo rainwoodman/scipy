@@ -9,12 +9,13 @@ from warnings import warn
 
 import numpy as np
 
-from scipy.lib.six.moves import zip as izip
+from scipy.lib.six import zip as izip
 
-from .sparsetools import coo_tocsr, coo_todense, coo_matvec
+from ._sparsetools import coo_tocsr, coo_todense, coo_matvec
 from .base import isspmatrix
 from .data import _data_matrix, _minmax_mixin
-from .sputils import upcast, upcast_char, to_native, isshape, getdtype, isintlike
+from .sputils import upcast, upcast_char, to_native, isshape, getdtype, isintlike, \
+     get_index_dtype, downcast_intp_index, _compat_bincount
 
 
 class coo_matrix(_data_matrix, _minmax_mixin):
@@ -87,29 +88,29 @@ class coo_matrix(_data_matrix, _minmax_mixin):
     Examples
     --------
     >>> from scipy.sparse import coo_matrix
-    >>> coo_matrix((3,4), dtype=np.int8).todense()
-    matrix([[0, 0, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0]], dtype=int8)
+    >>> coo_matrix((3, 4), dtype=np.int8).toarray()
+    array([[0, 0, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0]], dtype=int8)
 
-    >>> row  = np.array([0,3,1,0])
-    >>> col  = np.array([0,3,1,2])
-    >>> data = np.array([4,5,7,9])
-    >>> coo_matrix((data,(row,col)), shape=(4,4)).todense()
-    matrix([[4, 0, 9, 0],
-            [0, 7, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 5]])
+    >>> row  = np.array([0, 3, 1, 0])
+    >>> col  = np.array([0, 3, 1, 2])
+    >>> data = np.array([4, 5, 7, 9])
+    >>> coo_matrix((data, (row, col)), shape=(4, 4)).toarray()
+    array([[4, 0, 9, 0],
+           [0, 7, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 5]])
 
     >>> # example with duplicates
-    >>> row  = np.array([0,0,1,3,1,0,0])
-    >>> col  = np.array([0,2,1,3,1,0,0])
-    >>> data = np.array([1,1,1,1,1,1,1])
-    >>> coo_matrix((data, (row,col)), shape=(4,4)).todense()
-    matrix([[3, 0, 1, 0],
-            [0, 2, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 1]])
+    >>> row  = np.array([0, 0, 1, 3, 1, 0, 0])
+    >>> col  = np.array([0, 2, 1, 3, 1, 0, 0])
+    >>> data = np.array([1, 1, 1, 1, 1, 1, 1])
+    >>> coo_matrix((data, (row, col)), shape=(4, 4)).toarray()
+    array([[3, 0, 1, 0],
+           [0, 2, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 1]])
 
     """
     def __init__(self, arg1, shape=None, dtype=None, copy=False):
@@ -119,8 +120,9 @@ class coo_matrix(_data_matrix, _minmax_mixin):
             if isshape(arg1):
                 M, N = arg1
                 self.shape = (M,N)
-                self.row = np.array([], dtype=np.intc)
-                self.col = np.array([], dtype=np.intc)
+                idx_dtype = get_index_dtype(maxval=max(M, N))
+                self.row = np.array([], dtype=idx_dtype)
+                self.col = np.array([], dtype=idx_dtype)
                 self.data = np.array([], getdtype(dtype, default=float))
             else:
                 try:
@@ -134,13 +136,14 @@ class coo_matrix(_data_matrix, _minmax_mixin):
                 except TypeError:
                     raise TypeError('invalid input format')
 
-                self.row = np.array(ij[0], copy=copy, dtype=np.intc)
-                self.col = np.array(ij[1], copy=copy, dtype=np.intc)
+                self.row = np.array(ij[0], copy=copy)
+                self.col = np.array(ij[1], copy=copy)
                 self.data = np.array(obj, copy=copy)
 
                 if shape is None:
                     if len(self.row) == 0 or len(self.col) == 0:
-                        raise ValueError('cannot infer dimensions from zero sized index arrays')
+                        raise ValueError('cannot infer dimensions from zero '
+                                         'sized index arrays')
                     M = self.row.max() + 1
                     N = self.col.max() + 1
                     self.shape = (M, N)
@@ -149,16 +152,21 @@ class coo_matrix(_data_matrix, _minmax_mixin):
                     M, N = shape
                     self.shape = (M, N)
 
+                idx_dtype = get_index_dtype(maxval=max(self.shape))
+                self.row = self.row.astype(idx_dtype)
+                self.col = self.col.astype(idx_dtype)
+
         elif arg1 is None:
             # Initialize an empty matrix.
             if not isinstance(shape, tuple) or not isintlike(shape[0]):
                 raise TypeError('dimensions not understood')
             warn('coo_matrix(None, shape=(M,N)) is deprecated, '
                     'use coo_matrix( (M,N) ) instead', DeprecationWarning)
+            idx_dtype = get_index_dtype(maxval=max(M, N))
             self.shape = shape
             self.data = np.array([], getdtype(dtype, default=float))
-            self.row = np.array([], dtype=np.intc)
-            self.col = np.array([], dtype=np.intc)
+            self.row = np.array([], dtype=idx_dtype)
+            self.col = np.array([], dtype=idx_dtype)
         else:
             if isspmatrix(arg1):
                 if isspmatrix_coo(arg1) and copy:
@@ -179,10 +187,11 @@ class coo_matrix(_data_matrix, _minmax_mixin):
                 except:
                     raise TypeError('invalid input format')
 
-                if np.rank(M) != 2:
-                    raise TypeError('expected rank <= 2 array or matrix')
+                if M.ndim != 2:
+                    raise TypeError('expected dimension <= 2 array or matrix')
+                else:
+                    self.shape = M.shape
 
-                self.shape = M.shape
                 self.row, self.col = M.nonzero()
                 self.data = M[self.row, self.col]
 
@@ -191,15 +200,37 @@ class coo_matrix(_data_matrix, _minmax_mixin):
 
         self._check()
 
-    def getnnz(self):
-        nnz = len(self.data)
-        if nnz != len(self.row) or nnz != len(self.col):
-            raise ValueError('row, column, and data array must all be the same length')
+    def getnnz(self, axis=None):
+        """Get the count of explicitly-stored values (nonzeros)
 
-        if np.rank(self.data) != 1 or np.rank(self.row) != 1 or np.rank(self.col) != 1:
-            raise ValueError('row, column, and data arrays must have rank 1')
+        Parameters
+        ----------
+        axis : None, 0, or 1
+            Select between the number of values across the whole matrix, in
+            each column, or in each row.
+        """
+        if axis is None:
+            nnz = len(self.data)
+            if nnz != len(self.row) or nnz != len(self.col):
+                raise ValueError('row, column, and data array must all be the '
+                                 'same length')
 
-        return int(nnz)
+            if self.data.ndim != 1 or self.row.ndim != 1 or \
+                    self.col.ndim != 1:
+                raise ValueError('row, column, and data arrays must be 1-D')
+
+            return int(nnz)
+
+        if axis < 0:
+            axis += 2
+        if axis == 0:
+            return _compat_bincount(downcast_intp_index(self.col),
+                                    minlength=self.shape[1])
+        elif axis == 1:
+            return _compat_bincount(downcast_intp_index(self.row),
+                                    minlength=self.shape[0])
+        else:
+            raise ValueError('axis out of bounds')
     nnz = property(fget=getnnz)
 
     def _check(self):
@@ -214,16 +245,16 @@ class coo_matrix(_data_matrix, _minmax_mixin):
             warn("col index array has non-integer dtype (%s) "
                     % self.col.dtype.name)
 
-        # only support 32-bit ints for now
-        self.row = np.asarray(self.row, dtype=np.intc)
-        self.col = np.asarray(self.col, dtype=np.intc)
+        idx_dtype = get_index_dtype(maxval=max(self.shape))
+        self.row = np.asarray(self.row, dtype=idx_dtype)
+        self.col = np.asarray(self.col, dtype=idx_dtype)
         self.data = to_native(self.data)
 
         if nnz > 0:
             if self.row.max() >= self.shape[0]:
-                raise ValueError('row index exceedes matrix dimensions')
+                raise ValueError('row index exceeds matrix dimensions')
             if self.col.max() >= self.shape[1]:
-                raise ValueError('column index exceedes matrix dimensions')
+                raise ValueError('column index exceeds matrix dimensions')
             if self.row.min() < 0:
                 raise ValueError('negative row index found')
             if self.col.min() < 0:
@@ -253,15 +284,15 @@ class coo_matrix(_data_matrix, _minmax_mixin):
         --------
         >>> from numpy import array
         >>> from scipy.sparse import coo_matrix
-        >>> row  = array([0,0,1,3,1,0,0])
-        >>> col  = array([0,2,1,3,1,0,0])
-        >>> data = array([1,1,1,1,1,1,1])
-        >>> A = coo_matrix( (data,(row,col)), shape=(4,4)).tocsc()
-        >>> A.todense()
-        matrix([[3, 0, 1, 0],
-                [0, 2, 0, 0],
-                [0, 0, 0, 0],
-                [0, 0, 0, 1]])
+        >>> row  = array([0, 0, 1, 3, 1, 0, 0])
+        >>> col  = array([0, 2, 1, 3, 1, 0, 0])
+        >>> data = array([1, 1, 1, 1, 1, 1, 1])
+        >>> A = coo_matrix((data, (row, col)), shape=(4, 4)).tocsc()
+        >>> A.toarray()
+        array([[3, 0, 1, 0],
+               [0, 2, 0, 0],
+               [0, 0, 0, 0],
+               [0, 0, 0, 1]])
 
         """
         from .csc import csc_matrix
@@ -269,12 +300,16 @@ class coo_matrix(_data_matrix, _minmax_mixin):
             return csc_matrix(self.shape, dtype=self.dtype)
         else:
             M,N = self.shape
-            indptr = np.empty(N + 1, dtype=np.intc)
-            indices = np.empty(self.nnz, dtype=np.intc)
+            idx_dtype = get_index_dtype((self.col, self.row),
+                                        maxval=max(self.nnz, M))
+            indptr = np.empty(N + 1, dtype=idx_dtype)
+            indices = np.empty(self.nnz, dtype=idx_dtype)
             data = np.empty(self.nnz, dtype=upcast(self.dtype))
 
             coo_tocsr(N, M, self.nnz,
-                      self.col, self.row, self.data,
+                      self.col.astype(idx_dtype),
+                      self.row.astype(idx_dtype),
+                      self.data,
                       indptr, indices, data)
 
             A = csc_matrix((data, indices, indptr), shape=self.shape)
@@ -291,15 +326,15 @@ class coo_matrix(_data_matrix, _minmax_mixin):
         --------
         >>> from numpy import array
         >>> from scipy.sparse import coo_matrix
-        >>> row  = array([0,0,1,3,1,0,0])
-        >>> col  = array([0,2,1,3,1,0,0])
-        >>> data = array([1,1,1,1,1,1,1])
-        >>> A = coo_matrix( (data,(row,col)), shape=(4,4)).tocsr()
-        >>> A.todense()
-        matrix([[3, 0, 1, 0],
-                [0, 2, 0, 0],
-                [0, 0, 0, 0],
-                [0, 0, 0, 1]])
+        >>> row  = array([0, 0, 1, 3, 1, 0, 0])
+        >>> col  = array([0, 2, 1, 3, 1, 0, 0])
+        >>> data = array([1, 1, 1, 1, 1, 1, 1])
+        >>> A = coo_matrix((data, (row, col)), shape=(4, 4)).tocsr()
+        >>> A.toarray()
+        array([[3, 0, 1, 0],
+               [0, 2, 0, 0],
+               [0, 0, 0, 0],
+               [0, 0, 0, 1]])
 
         """
         from .csr import csr_matrix
@@ -307,13 +342,19 @@ class coo_matrix(_data_matrix, _minmax_mixin):
             return csr_matrix(self.shape, dtype=self.dtype)
         else:
             M,N = self.shape
-            indptr = np.empty(M + 1, dtype=np.intc)
-            indices = np.empty(self.nnz, dtype=np.intc)
+            idx_dtype = get_index_dtype((self.row, self.col),
+                                        maxval=max(self.nnz, N))
+            indptr = np.empty(M + 1, dtype=idx_dtype)
+            indices = np.empty(self.nnz, dtype=idx_dtype)
             data = np.empty(self.nnz, dtype=upcast(self.dtype))
 
             coo_tocsr(M, N, self.nnz,
-                      self.row, self.col, self.data,
-                      indptr, indices, data)
+                      self.row.astype(idx_dtype),
+                      self.col.astype(idx_dtype),
+                      self.data,
+                      indptr,
+                      indices,
+                      data)
 
             A = csr_matrix((data, indices, indptr), shape=self.shape)
             A.sum_duplicates()

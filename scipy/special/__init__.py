@@ -26,6 +26,7 @@ Example:
    :toctree: generated/
 
    errprint
+   SpecialFunctionWarning -- Warning that can be issued with ``errprint(True)``
 
 Available functions
 ===================
@@ -61,7 +62,6 @@ Bessel Functions
 .. autosummary::
    :toctree: generated/
 
-   jn       -- Bessel function of integer order and real argument.
    jv       -- Bessel function of real-valued order and complex argument.
    jve      -- Exponentially scaled Bessel function.
    yn       -- Bessel function of second kind (integer order).
@@ -193,7 +193,7 @@ Raw Statistical Functions
 .. autosummary::
    :toctree: generated/
 
-   bdtr       -- Sum of terms 0 through k of of the binomial pdf.
+   bdtr       -- Sum of terms 0 through k of the binomial pdf.
    bdtrc      -- Sum of terms k+1 through n of the binomial pdf.
    bdtri      -- Inverse of bdtr
    btdtr      -- Integral from 0 to x of beta pdf.
@@ -209,6 +209,17 @@ Raw Statistical Functions
    nbdtr      -- Sum of terms 0 through k of the negative binomial pdf.
    nbdtrc     -- Sum of terms k+1 to infinity under negative binomial pdf.
    nbdtri     -- Inverse of nbdtr
+   ncfdtr     -- CDF of non-central t distribution.
+   ncfdtridfd -- Find degrees of freedom (denominator) of noncentral F distribution.
+   ncfdtridfn -- Find degrees of freedom (numerator) of noncentral F distribution.
+   ncfdtri    -- Inverse CDF of noncentral F distribution.
+   ncfdtrinc  -- Find noncentrality parameter of noncentral F distribution.
+   nctdtr     -- CDF of noncentral t distribution.
+   nctdtridf  -- Find degrees of freedom of noncentral t distribution.
+   nctdtrit   -- Inverse CDF of noncentral t distribution.
+   nctdtrinc  -- Find noncentrality parameter of noncentral t distribution.
+   nrdtrimn   -- Find mean of normal distribution from cdf and std.
+   nrdtrisd   -- Find std of normal distribution from cdf and mean.
    pdtr       -- Sum of terms 0 through k of the Poisson pdf.
    pdtrc      -- Sum of terms k+1 to infinity of the Poisson pdf.
    pdtri      -- Inverse of pdtr
@@ -227,6 +238,8 @@ Raw Statistical Functions
    tklmbda    -- Tukey-Lambda CDF
    logit      --
    expit      --
+   boxcox     -- Compute the Box-Cox transformation.
+   boxcox1p   -- Compute the Box-Cox transformation.
 
 Gamma and Related Functions
 ---------------------------
@@ -293,9 +306,10 @@ These are not universal functions:
 .. autosummary::
    :toctree: generated/
 
+   clpmn    -- [+]Associated Legendre Function of the first kind for complex arguments.
    lpn      -- [+]Legendre Functions (polynomials) of the first kind
    lqn      -- [+]Legendre Functions of the second kind.
-   lpmn     -- [+]Associated Legendre Function of the first kind.
+   lpmn     -- [+]Associated Legendre Function of the first kind for real arguments.
    lqmn     -- [+]Associated Legendre Function of the second kind.
 
 Orthogonal polynomials
@@ -306,6 +320,7 @@ The following functions evaluate values of orthogonal polynomials:
 .. autosummary::
    :toctree: generated/
 
+   assoc_laguerre
    eval_legendre
    eval_chebyt
    eval_chebyu
@@ -482,6 +497,15 @@ These are not universal functions:
    kerp_zeros   -- [+]Zeros of derivative of Kelvin function ker x
    keip_zeros   -- [+]Zeros of derivative of Kelvin function kei x
 
+Combinatorics
+-------------
+
+.. autosummary::
+    :toctree: generated/
+
+    comb    -- [+]Combinations of N things taken k at a time, "N choose k"
+    perm    -- [+]Permutations of N things taken k at a time, "k-permutations of N"
+
 Other Special Functions
 -----------------------
 
@@ -492,12 +516,15 @@ Other Special Functions
    expn         -- Exponential integral.
    exp1         -- Exponential integral of order 1 (for complex argument)
    expi         -- Another exponential integral -- Ei(x)
+   factorial    -- The factorial function, n! = special.gamma(n+1)
+   factorial2   -- Double factorial, (n!)!
+   factorialk   -- [+](...((n!)!)!...)! where there are k '!'
    shichi       -- Hyperbolic sine and cosine integrals.
    sici         -- Integral of the sinc and "cosinc" functions.
    spence       -- Dilogarithm integral.
    lambertw     -- Lambert W function
    zeta         -- Riemann zeta function of two arguments.
-   zetac        -- 1.0 - standard Riemann zeta function.
+   zetac        -- Standard Riemann zeta function minus 1.
 
 Convenience Functions
 ---------------------
@@ -536,6 +563,7 @@ from . import orthogonal
 from .orthogonal import *
 from .spfun_stats import multigammaln
 from .lambertw import lambertw
+
 
 __all__ = [s for s in dir() if not s.startswith('_')]
 

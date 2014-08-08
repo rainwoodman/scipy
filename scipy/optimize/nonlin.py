@@ -116,7 +116,7 @@ from __future__ import division, print_function, absolute_import
 import sys
 import numpy as np
 from scipy.lib.six import callable, exec_
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 from scipy.linalg import norm, solve, inv, qr, svd, LinAlgError
 from numpy import asarray, dot, vdot
 import scipy.sparse.linalg
@@ -668,8 +668,13 @@ class GenericBroyden(Jacobian):
         self.last_x = x0
 
         if hasattr(self, 'alpha') and self.alpha is None:
-            # autoscale the initial Jacobian parameter
-            self.alpha = 0.5*max(norm(x0), 1) / norm(f0)
+            # Autoscale the initial Jacobian parameter
+            # unless we have already guessed the solution.
+            normf0 = norm(f0)
+            if normf0:
+                self.alpha = 0.5*max(norm(x0), 1) / normf0
+            else:
+                self.alpha = 1.0
 
     def _update(self, x, f, dx, df, dx_norm, df_norm):
         raise NotImplementedError

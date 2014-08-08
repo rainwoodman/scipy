@@ -15,7 +15,7 @@ from __future__ import division, print_function, absolute_import
 
 from scipy.optimize import minpack2
 import numpy as np
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
 
 __all__ = ['line_search_wolfe1', 'line_search_wolfe2',
            'scalar_search_wolfe1', 'scalar_search_wolfe2',
@@ -214,12 +214,20 @@ def line_search_wolfe2(f, myfprime, xk, pk, gfk=None, old_fval=None,
 
     Returns
     -------
-    alpha0 : float
+    alpha : float
         Alpha for which ``x_new = x0 + alpha * pk``.
     fc : int
         Number of function evaluations made.
     gc : int
         Number of gradient evaluations made.
+    new_fval : float
+        New function value ``f(x_new)=f(x0+alpha*pk)``.
+    old_fval : float
+        Old function value ``f(x0)``.
+    new_slope : float
+        The local slope along the search direction at the
+        new value ``<myfprime(x_new), pk>``.
+    
 
     Notes
     -----
@@ -255,7 +263,7 @@ def line_search_wolfe2(f, myfprime, xk, pk, gfk=None, old_fval=None,
             return np.dot(gval[0], pk)
 
     if gfk is None:
-        gfk = fprime(xk)
+        gfk = fprime(xk, *args)
     derphi0 = np.dot(gfk, pk)
 
     alpha_star, phi_star, old_fval, derphi_star = \
@@ -404,27 +412,27 @@ def _cubicmin(a, fa, fpa, b, fb, c, fc):
     """
     # f(x) = A *(x-a)^3 + B*(x-a)^2 + C*(x-a) + D
 
-    C = fpa
-    db = b - a
-    dc = c - a
-    if (db == 0) or (dc == 0) or (b == c):
+    with np.errstate(divide='raise', over='raise', invalid='raise'):
+        try:
+            C = fpa
+            db = b - a
+            dc = c - a
+            denom = (db * dc) ** 2 * (db - dc)
+            d1 = np.empty((2, 2))
+            d1[0, 0] = dc ** 2
+            d1[0, 1] = -db ** 2
+            d1[1, 0] = -dc ** 3
+            d1[1, 1] = db ** 3
+            [A, B] = np.dot(d1, np.asarray([fb - fa - C * db,
+                                            fc - fa - C * dc]).flatten())
+            A /= denom
+            B /= denom
+            radical = B * B - 3 * A * C
+            xmin = a + (-B + np.sqrt(radical)) / (3 * A)
+        except ArithmeticError:
+            return None
+    if not np.isfinite(xmin):
         return None
-    denom = (db * dc) ** 2 * (db - dc)
-    d1 = np.empty((2, 2))
-    d1[0, 0] = dc ** 2
-    d1[0, 1] = -db ** 2
-    d1[1, 0] = -dc ** 3
-    d1[1, 1] = db ** 3
-    [A, B] = np.dot(d1, np.asarray([fb - fa - C * db,
-                                    fc - fa - C * dc]).flatten())
-    A /= denom
-    B /= denom
-    radical = B * B - 3 * A * C
-    if radical < 0:
-        return None
-    if A == 0:
-        return None
-    xmin = a + (-B + np.sqrt(radical)) / (3 * A)
     return xmin
 
 
@@ -435,15 +443,17 @@ def _quadmin(a, fa, fpa, b, fb):
 
     """
     # f(x) = B*(x-a)^2 + C*(x-a) + D
-    D = fa
-    C = fpa
-    db = b - a * 1.0
-    if db == 0:
+    with np.errstate(divide='raise', over='raise', invalid='raise'):
+        try:
+            D = fa
+            C = fpa
+            db = b - a * 1.0
+            B = (fb - D - C * db) / (db * db)
+            xmin = a - C / (2.0 * B)
+        except ArithmeticError:
+            return None
+    if not np.isfinite(xmin):
         return None
-    B = (fb - D - C * db) / (db * db)
-    if B <= 0:
-        return None
-    xmin = a - C / (2.0 * B)
     return xmin
 
 
