@@ -1165,7 +1165,7 @@ cdef class cKDTree:
 
 
     @cython.boundscheck(False)
-    def query(cKDTree self, object x, np.intp_t k=1, np.float64_t eps=0,
+    def query(cKDTree self, object x, object k=1, np.float64_t eps=0,
               np.float64_t p=2, np.float64_t distance_upper_bound=infinity):
         """query(self, x, k=1, eps=0, p=2, distance_upper_bound=np.inf)
         
@@ -1175,8 +1175,9 @@ cdef class cKDTree:
         ----------
         x : array_like, last dimension self.m
             An array of points to query.
-        k : integer
-            The number of nearest neighbors to return.
+        k : integer or list
+            The number of nearest neighbors to return,
+            or a list of ranks of nearest neighbor to return.
         eps : non-negative float
             Return approximate nearest neighbors; the kth returned value 
             is guaranteed to be no further than (1+eps) times the 
@@ -1196,18 +1197,29 @@ cdef class cKDTree:
         -------
         d : array of floats
             The distances to the nearest neighbors. 
-            If x has shape tuple+(self.m,), then d has shape tuple+(k,).
             Missing neighbors are indicated with infinite distances.
+            If x has shape tuple+(self.m,), then d has shape:
+            tuple, if k == 1,
+            tuple+(k,), if k > 1,
+            tuple+(len(k), ), if k is a list.
         i : ndarray of ints
             The locations of the neighbors in self.data.
-            If `x` has shape tuple+(self.m,), then `i` has shape tuple+(k,).
             Missing neighbors are indicated with self.n.
+            If x has shape tuple+(self.m,), then i has shape:
+            tuple, if k == 1,
+            tuple+(k,), if k > 1,
+            tuple+(len(k), ), if k is a list.
 
         """
         cdef np.ndarray[np.intp_t, ndim=2] ii
         cdef np.ndarray[np.float64_t, ndim=2] dd
         cdef np.ndarray[np.float64_t, ndim=2] xx
-        cdef np.intp_t c, n, i, j
+        cdef np.ndarray[np.intp_t, ndim=1] ranks
+        cdef np.intp_t c, n, i, j, l
+        cdef np.intp_t rankmax
+        cdef np.ndarray[np.intp_t, ndim=1] iiscratch
+        cdef np.ndarray[np.float64_t, ndim=1] ddscratch
+
         x = np.asarray(x).astype(np.float64)
         if np.shape(x)[-1] != self.m:
             raise ValueError("x must consist of vectors of length %d but has"
@@ -1219,20 +1231,41 @@ cdef class cKDTree:
             x = x[np.newaxis,:]
         else:
             single = False
+
+        if np.isscalar(k):
+            ranks = np.empty(k, dtype=np.intp)
+            ranks[:] = range(1, k + 1)
+            if k == 1: 
+                squeeze = True
+            else:
+                squeeze = False
+        else:
+            ranks = np.empty(len(k), dtype=np.intp)
+            ranks[:] = k
+            squeeze = False
+
+        rankmax = ranks.max()
+
+        iiscratch = np.empty(rankmax, dtype=np.intp)
+        ddscratch = np.empty(rankmax, dtype=np.float64)
+
         retshape = np.shape(x)[:-1]
         n = <np.intp_t> np.prod(retshape)
         xx = np.reshape(x,(n,self.m))
         xx = np.ascontiguousarray(xx,dtype=np.float64)
-        dd = np.empty((n,k),dtype=np.float64)
-        dd.fill(infinity)
-        ii = np.empty((n,k),dtype=np.intp)
-        ii.fill(self.n)
+        dd = np.empty((n, ranks.shape[0]),dtype=np.float64)
+        ii = np.empty((n, ranks.shape[0]),dtype=np.intp)
         for c in range(n):
-            self.__query(&dd[c, 0], &ii[c, 0], &xx[c, 0],
-                         k, eps, p, distance_upper_bound)
+            iiscratch.fill(self.n)
+            ddscratch.fill(infinity)
+            self.__query(&ddscratch[0], &iiscratch[0], &xx[c, 0],
+                         rankmax, eps, p, distance_upper_bound)
+            for l in range(ranks.shape[0]):
+                ii[c, l] = iiscratch[ranks[l] - 1]
+                dd[c, l] = ddscratch[ranks[l] - 1]
 
         if single:
-            if k==1:
+            if squeeze:
                 if sizeof(long) < sizeof(np.intp_t):
                     # ... e.g. Windows 64
                     if ii[0,0] <= <np.intp_t>LONG_MAX:
@@ -1248,26 +1281,29 @@ cdef class cKDTree:
             if sizeof(long) < sizeof(np.intp_t):
                 # ... e.g. Windows 64
                 for i in range(n):
-                    for j in range(k):
+                    for j in range(ranks.shape[0]):
                         if ii[i,j] > <np.intp_t>LONG_MAX:
                             # C long overlow, return array of dtype=np.int_p
-                            if k==1:
+                            if ranks.shape[0]==1:
                                 return np.reshape(dd[...,0],retshape), np.reshape(ii[...,0],retshape)
                             else:
-                                return np.reshape(dd,retshape+(k,)), np.reshape(ii,retshape+(k,))
+                                return (np.reshape(dd,retshape+(ranks.shape[0],)),
+                                       np.reshape(ii,retshape+(ranks.shape[0],)))
 
                 # no C long overlow, return array of dtype=int
-                if k==1:
+                if squeeze:
                     return np.reshape(dd[...,0],retshape), np.reshape(ii[...,0],retshape).astype(int)
                 else:
-                    return np.reshape(dd,retshape+(k,)), np.reshape(ii,retshape+(k,)).astype(int)     
+                    return (np.reshape(dd,retshape+(ranks.shape[0],)),
+                           np.reshape(ii,retshape+(ranks.shape[0],)).astype(int))
 
             else:
                 # ... most other platforms
-                if k==1:
+                if squeeze:
                     return np.reshape(dd[...,0],retshape), np.reshape(ii[...,0],retshape)
                 else:
-                    return np.reshape(dd,retshape+(k,)), np.reshape(ii,retshape+(k,))
+                    return (np.reshape(dd,retshape+(ranks.shape[0],)), 
+                           np.reshape(ii,retshape+(ranks.shape[0],)))
 
     # ----------------
     # query_ball_point
