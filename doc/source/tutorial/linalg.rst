@@ -475,7 +475,7 @@ returns :math:`\lambda` and :math:`\mathbf{v}.` However, it can also
 return :math:`\mathbf{v}_{L}` and just :math:`\lambda` by itself (
 :obj:`linalg.eigvals` returns just :math:`\lambda` as well).
 
-In addtion, :obj:`linalg.eig` can also solve the more general eigenvalue problem
+In addition, :obj:`linalg.eig` can also solve the more general eigenvalue problem
 
 .. math::
    :nowrap:
@@ -556,7 +556,7 @@ the eigenvalue problem to matrices that are not square. Let
 :math:`\mathbf{A}\mathbf{A}^{H}` are square hermitian matrices [#]_ of
 size :math:`N\times N` and :math:`M\times M` respectively. It is known
 that the eigenvalues of square hermitian matrices are real and
-non-negative. In addtion, there are at most
+non-negative. In addition, there are at most
 :math:`\min\left(M,N\right)` identical non-zero eigenvalues of
 :math:`\mathbf{A}^{H}\mathbf{A}` and :math:`\mathbf{A}\mathbf{A}^{H}.`
 Define these positive eigenvalues as :math:`\sigma_{i}^{2}.` The
@@ -674,7 +674,7 @@ then decompositions of :math:`\mathbf{A}` can be found so that
 
 where :math:`\mathbf{L}` is lower-triangular and :math:`\mathbf{U}` is
 upper triangular. Notice that :math:`\mathbf{L}=\mathbf{U}^{H}.` The
-command :obj:`linagl.cholesky` computes the cholesky
+command :obj:`linalg.cholesky` computes the cholesky
 factorization. For using cholesky factorization to solve systems of
 equations there are also :obj:`linalg.cho_factor` and
 :obj:`linalg.cho_solve` routines that work similarly to their LU
@@ -772,6 +772,34 @@ The following example illustrates the schur decomposition:
     [[  3.34058710e-16   8.88611201e-16   4.18773089e-18]
      [  1.48694940e-16   8.95109973e-16   8.92966151e-16]
      [  1.33228956e-15   1.33582317e-15   3.55373104e-15]]
+
+
+Interpolative Decomposition
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:mod:`scipy.linalg.interpolative` contains routines for computing the
+interpolative decomposition (ID) of a matrix. For a matrix :math:`A
+\in \mathbb{C}^{m \times n}` of rank :math:`k \leq \min \{ m, n \}`
+this is a factorization
+
+.. math::
+  A \Pi =
+  \begin{bmatrix}
+   A \Pi_{1} & A \Pi_{2}
+  \end{bmatrix} =
+  A \Pi_{1}
+  \begin{bmatrix}
+   I & T
+  \end{bmatrix},
+
+where :math:`\Pi = [\Pi_{1}, \Pi_{2}]` is a permutation matrix with
+:math:`\Pi_{1} \in \{ 0, 1 \}^{n \times k}`, i.e., :math:`A \Pi_{2} =
+A \Pi_{1} T`. This can equivalently be written as :math:`A = BP`,
+where :math:`B = A \Pi_{1}` and :math:`P = [I, T] \Pi^{\mathsf{T}}`
+are the *skeleton* and *interpolation matrices*, respectively.
+
+.. seealso:: `scipy.linalg.interpolative` --- for more information.
+
 
 Matrix Functions
 ----------------

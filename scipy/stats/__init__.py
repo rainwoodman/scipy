@@ -142,6 +142,14 @@ Continuous distributions
    weibull_max       -- Maximum Weibull (see Frechet)
    wrapcauchy        -- Wrapped Cauchy
 
+Multivariate distributions
+==========================
+
+.. autosummary::
+   :toctree: generated/
+
+   multivariate_normal   -- Multivariate normal distribution
+
 Discrete distributions
 ======================
 
@@ -171,7 +179,6 @@ which work for masked arrays.
 .. autosummary::
    :toctree: generated/
 
-   cmedian           -- Computed median
    describe          -- Descriptive statistics
    gmean             -- Geometric mean
    hmean             -- Harmonic mean
@@ -224,6 +231,7 @@ which work for masked arrays.
 .. autosummary::
    :toctree: generated/
 
+   sigmaclip
    threshold
    trimboth
    trim1
@@ -237,6 +245,7 @@ which work for masked arrays.
    pointbiserialr
    kendalltau
    linregress
+   theilslopes
 
 .. autosummary::
    :toctree: generated/
@@ -246,6 +255,7 @@ which work for masked arrays.
    ttest_rel
    kstest
    chisquare
+   power_divergence
    ks_2samp
    mannwhitneyu
    tiecorrect
@@ -263,10 +273,19 @@ which work for masked arrays.
    levene
    shapiro
    anderson
+   anderson_ksamp
    binom_test
    fligner
    mood
-   oneway
+
+.. autosummary::
+   :toctree: generated/
+
+   boxcox
+   boxcox_normmax
+   boxcox_llf
+
+   entropy
 
 Contingency table functions
 ===========================
@@ -279,14 +298,6 @@ Contingency table functions
    contingency.margins
    fisher_exact
 
-General linear model
-====================
-
-.. autosummary::
-   :toctree: generated/
-
-   glm
-
 Plot-tests
 ==========
 
@@ -296,6 +307,7 @@ Plot-tests
    ppcc_max
    ppcc_plot
    probplot
+   boxcox_normplot
 
 
 Masked statistics functions
@@ -328,6 +340,7 @@ from ._binned_statistic import *
 from .kde import gaussian_kde
 from . import mstats
 from .contingency import chi2_contingency
+from ._multivariate import *
 
 #remove vonmises_cython from __all__, I don't know why it is included
 __all__ = [s for s in dir() if not (s.startswith('_') or s.endswith('cython'))]

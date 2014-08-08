@@ -4,19 +4,21 @@
 from __future__ import division, print_function, absolute_import
 
 import warnings
+import threading
 
 from . import sigtools
 from scipy.lib.six import callable
+from scipy.lib._version import NumpyVersion
 from scipy import linalg
-from scipy.fftpack import fft, ifft, ifftshift, fft2, ifft2, fftn, \
-        ifftn, fftfreq
+from scipy.fftpack import (fft, ifft, ifftshift, fft2, ifft2, fftn,
+                           ifftn, fftfreq)
 from numpy.fft import rfftn, irfftn
-from numpy import polyadd, polymul, polydiv, polysub, roots, \
-        poly, polyval, polyder, cast, asarray, isscalar, atleast_1d, \
-        ones, real_if_close, zeros, array, arange, where, rank, \
-        newaxis, product, ravel, sum, r_, iscomplexobj, take, \
-        argsort, allclose, expand_dims, unique, prod, sort, reshape, \
-        transpose, dot, mean, ndarray, atleast_2d
+from numpy import (allclose, angle, arange, argsort, array, asarray,
+                   atleast_1d, atleast_2d, cast, dot, exp, expand_dims,
+                   iscomplexobj, isscalar, mean, ndarray, newaxis, ones, pi,
+                   poly, polyadd, polyder, polydiv, polymul, polysub, polyval,
+                   prod, product, r_, ravel, real_if_close, reshape,
+                   roots, sort, sum, take, transpose, unique, where, zeros)
 import numpy as np
 from scipy.misc import factorial
 from .windows import get_window
@@ -26,7 +28,8 @@ __all__ = ['correlate', 'fftconvolve', 'convolve', 'convolve2d', 'correlate2d',
            'order_filter', 'medfilt', 'medfilt2d', 'wiener', 'lfilter',
            'lfiltic', 'deconvolve', 'hilbert', 'hilbert2', 'cmplx_sort',
            'unique_roots', 'invres', 'invresz', 'residue', 'residuez',
-           'resample', 'detrend', 'lfilter_zi', 'filtfilt', 'decimate']
+           'resample', 'detrend', 'lfilter_zi', 'filtfilt', 'decimate',
+           'vectorstrength']
 
 
 _modedict = {'valid': 0, 'same': 1, 'full': 2}
@@ -35,13 +38,18 @@ _boundarydict = {'fill': 0, 'pad': 0, 'wrap': 2, 'circular': 2, 'symm': 1,
                  'symmetric': 1, 'reflect': 4}
 
 
+_rfft_mt_safe = (NumpyVersion(np.__version__) >= '1.9.0.dev-e24486e')
+
+_rfft_lock = threading.Lock()
+
+
 def _valfrommode(mode):
     try:
         val = _modedict[mode]
     except KeyError:
         if mode not in [0, 1, 2]:
             raise ValueError("Acceptable mode flags are 'valid' (0),"
-                    " 'same' (1), or 'full' (2).")
+                             " 'same' (1), or 'full' (2).")
         val = mode
     return val
 
@@ -52,7 +60,8 @@ def _bvalfromboundary(boundary):
     except KeyError:
         if val not in [0, 1, 2]:
             raise ValueError("Acceptable boundary flags are 'fill', 'wrap'"
-                    " (or 'circular'), \n  and 'symm' (or 'symmetric').")
+                             " (or 'circular'), \n  and 'symm'"
+                             " (or 'symmetric').")
         val = boundary << 2
     return val
 
@@ -101,21 +110,51 @@ def correlate(in1, in2, mode='full'):
 
     Notes
     -----
-    The correlation z of two arrays x and y of rank d is defined as:
+    The correlation z of two d-dimensional arrays x and y is defined as:
 
       z[...,k,...] = sum[..., i_l, ...]
                          x[..., i_l,...] * conj(y[..., i_l + k,...])
+
+    Examples
+    --------
+    Implement a matched filter using cross-correlation, to recover a signal
+    that has passed through a noisy channel.
+
+    >>> from scipy import signal
+    >>> sig = np.repeat([0., 1., 1., 0., 1., 0., 0., 1.], 128)
+    >>> sig_noise = sig + np.random.randn(len(sig))
+    >>> corr = signal.correlate(sig_noise, np.ones(128), mode='same') / 128
+
+    >>> import matplotlib.pyplot as plt
+    >>> clock = np.arange(64, len(sig), 128)
+    >>> fig, (ax_orig, ax_noise, ax_corr) = plt.subplots(3, 1, sharex=True)
+    >>> ax_orig.plot(sig)
+    >>> ax_orig.plot(clock, sig[clock], 'ro')
+    >>> ax_orig.set_title('Original signal')
+    >>> ax_noise.plot(sig_noise)
+    >>> ax_noise.set_title('Signal with noise')
+    >>> ax_corr.plot(corr)
+    >>> ax_corr.plot(clock, corr[clock], 'ro')
+    >>> ax_corr.axhline(0.5, ls=':')
+    >>> ax_corr.set_title('Cross-correlated with rectangular pulse')
+    >>> ax_orig.margins(0, 0.1)
+    >>> fig.show()
 
     """
     in1 = asarray(in1)
     in2 = asarray(in2)
 
-    val = _valfrommode(mode)
+    # Don't use _valfrommode, since correlate should not accept numeric modes
+    try:
+        val = _modedict[mode]
+    except KeyError:
+        raise ValueError("Acceptable mode flags are 'valid',"
+                         " 'same', or 'full'.")
 
-    if rank(in1) == rank(in2) == 0:
+    if in1.ndim == in2.ndim == 0:
         return in1 * in2
     elif not in1.ndim == in2.ndim:
-        raise ValueError("in1 and in2 should have the same rank")
+        raise ValueError("in1 and in2 should have the same dimensionality")
 
     if mode == 'valid':
         _check_valid_mode_shapes(in1.shape, in2.shape)
@@ -124,6 +163,12 @@ def correlate(in1, in2, mode='full'):
 
         z = sigtools._correlateND(in1, in2, out, val)
     else:
+        # _correlateND is far slower when in2.size > in1.size, so swap them
+        # and then undo the effect afterward
+        swapped_inputs = (mode == 'full') and (in2.size > in1.size)
+        if swapped_inputs:
+            in1, in2 = in2, in1
+
         ps = [i + j - 1 for i, j in zip(in1.shape, in2.shape)]
         # zero pad input
         in1zpadded = np.zeros(ps, in1.dtype)
@@ -137,6 +182,11 @@ def correlate(in1, in2, mode='full'):
 
         z = sigtools._correlateND(in1zpadded, in2, out, val)
 
+        # Reverse and conjugate to undo the effect of swapping inputs
+        if swapped_inputs:
+            slice_obj = [slice(None, None, -1)] * len(z.shape)
+            z = z[slice_obj].conj()
+
     return z
 
 
@@ -148,6 +198,56 @@ def _centered(arr, newsize):
     endind = startind + newsize
     myslice = [slice(startind[k], endind[k]) for k in range(len(endind))]
     return arr[tuple(myslice)]
+
+
+def _next_regular(target):
+    """
+    Find the next regular number greater than or equal to target.
+    Regular numbers are composites of the prime factors 2, 3, and 5.
+    Also known as 5-smooth numbers or Hamming numbers, these are the optimal
+    size for inputs to FFTPACK.
+
+    Target must be a positive integer.
+    """
+    if target <= 6:
+        return target
+
+    # Quickly check if it's already a power of 2
+    if not (target & (target-1)):
+        return target
+
+    match = float('inf')  # Anything found will be smaller
+    p5 = 1
+    while p5 < target:
+        p35 = p5
+        while p35 < target:
+            # Ceiling integer division, avoiding conversion to float
+            # (quotient = ceil(target / p35))
+            quotient = -(-target // p35)
+
+            # Quickly find next power of 2 >= quotient
+            try:
+                p2 = 2**((quotient - 1).bit_length())
+            except AttributeError:
+                # Fallback for Python <2.7
+                p2 = 2**(len(bin(quotient - 1)) - 2)
+
+            N = p2 * p35
+            if N == target:
+                return N
+            elif N < match:
+                match = N
+            p35 *= 3
+            if p35 == target:
+                return p35
+        if p35 < match:
+            match = p35
+        p5 *= 5
+        if p5 == target:
+            return p5
+    if p5 < match:
+        match = p5
+    return match
 
 
 def fftconvolve(in1, in2, mode="full"):
@@ -187,14 +287,53 @@ def fftconvolve(in1, in2, mode="full"):
         An N-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
+    Examples
+    --------
+    Autocorrelation of white noise is an impulse.  (This is at least 100 times
+    as fast as `convolve`.)
+
+    >>> from scipy import signal
+    >>> sig = np.random.randn(1000)
+    >>> autocorr = signal.fftconvolve(sig, sig[::-1], mode='full')
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_mag) = plt.subplots(2, 1)
+    >>> ax_orig.plot(sig)
+    >>> ax_orig.set_title('White noise')
+    >>> ax_mag.plot(np.arange(-len(sig)+1,len(sig)), autocorr)
+    >>> ax_mag.set_title('Autocorrelation')
+    >>> fig.show()
+
+    Gaussian blur implemented using FFT convolution.  Notice the dark borders
+    around the image, due to the zero-padding beyond its boundaries.
+    The `convolve2d` function allows for other types of image boundaries,
+    but is far slower.
+
+    >>> from scipy import misc
+    >>> lena = misc.lena()
+    >>> kernel = np.outer(signal.gaussian(70, 8), signal.gaussian(70, 8))
+    >>> blurred = signal.fftconvolve(lena, kernel, mode='same')
+
+    >>> fig, (ax_orig, ax_kernel, ax_blurred) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_kernel.imshow(kernel, cmap='gray')
+    >>> ax_kernel.set_title('Gaussian kernel')
+    >>> ax_kernel.set_axis_off()
+    >>> ax_blurred.imshow(blurred, cmap='gray')
+    >>> ax_blurred.set_title('Blurred')
+    >>> ax_blurred.set_axis_off()
+    >>> fig.show()
+
     """
     in1 = asarray(in1)
     in2 = asarray(in2)
 
-    if rank(in1) == rank(in2) == 0:  # scalar inputs
+    if in1.ndim == in2.ndim == 0:  # scalar inputs
         return in1 * in2
     elif not in1.ndim == in2.ndim:
-        raise ValueError("in1 and in2 should have the same rank")
+        raise ValueError("in1 and in2 should have the same dimensionality")
     elif in1.size == 0 or in2.size == 0:  # empty arrays
         return array([])
 
@@ -202,20 +341,31 @@ def fftconvolve(in1, in2, mode="full"):
     s2 = array(in2.shape)
     complex_result = (np.issubdtype(in1.dtype, np.complex) or
                       np.issubdtype(in2.dtype, np.complex))
-    size = s1 + s2 - 1
+    shape = s1 + s2 - 1
 
     if mode == "valid":
         _check_valid_mode_shapes(s1, s2)
 
-    # Always use 2**n-sized FFT
-    fsize = 2 ** np.ceil(np.log2(size)).astype(int)
-    fslice = tuple([slice(0, int(sz)) for sz in size])
-    if not complex_result:
-        ret = irfftn(rfftn(in1, fsize) *
-                     rfftn(in2, fsize), fsize)[fslice].copy()
-        ret = ret.real
+    # Speed up FFT by padding to optimal size for FFTPACK
+    fshape = [_next_regular(int(d)) for d in shape]
+    fslice = tuple([slice(0, int(sz)) for sz in shape])
+    # Pre-1.9 NumPy FFT routines are not threadsafe.  For older NumPys, make
+    # sure we only call rfftn/irfftn from one thread at a time.
+    if not complex_result and (_rfft_mt_safe or _rfft_lock.acquire(False)):
+        try:
+            ret = irfftn(rfftn(in1, fshape) *
+                         rfftn(in2, fshape), fshape)[fslice].copy()
+        finally:
+            if not _rfft_mt_safe:
+                _rfft_lock.release()
     else:
-        ret = ifftn(fftn(in1, fsize) * fftn(in2, fsize))[fslice].copy()
+        # If we're here, it's either because we need a complex result, or we
+        # failed to acquire _rfft_lock (meaning rfftn isn't threadsafe and
+        # is already in use by another thread).  In either case, use the
+        # (threadsafe but slower) SciPy complex-FFT routines instead.
+        ret = ifftn(fftn(in1, fshape) * fftn(in2, fshape))[fslice].copy()
+        if not complex_result:
+            ret = ret.real
 
     if mode == "full":
         return ret
@@ -223,6 +373,9 @@ def fftconvolve(in1, in2, mode="full"):
         return _centered(ret, s1)
     elif mode == "valid":
         return _centered(ret, s1 - s2 + 1)
+    else:
+        raise ValueError("Acceptable mode flags are 'valid',"
+                         " 'same', or 'full'.")
 
 
 def convolve(in1, in2, mode='full'):
@@ -259,11 +412,16 @@ def convolve(in1, in2, mode='full'):
         An N-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
+    See also
+    --------
+    numpy.polymul : performs polynomial multiplication (same operation, but
+                    also accepts poly1d objects)
+
     """
     volume = asarray(in1)
     kernel = asarray(in2)
 
-    if rank(volume) == rank(kernel) == 0:
+    if volume.ndim == kernel.ndim == 0:
         return volume * kernel
 
     slice_obj = [slice(None, None, -1)] * len(kernel.shape)
@@ -332,7 +490,7 @@ def order_filter(a, domain, rank):
     for k in range(len(size)):
         if (size[k] % 2) != 1:
             raise ValueError("Each dimension of domain argument "
-                    " should have an odd number of elements.")
+                             " should have an odd number of elements.")
     return sigtools._order_filterND(a, domain, rank)
 
 
@@ -472,6 +630,34 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
         A 2-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
+    Examples
+    --------
+    Compute the gradient of an image by 2D convolution with a complex Scharr
+    operator.  (Horizontal operator is real, vertical is imaginary.)  Use
+    symmetric boundary condition to avoid creating edges at the image
+    boundaries.
+
+    >>> from scipy import signal
+    >>> from scipy import misc
+    >>> lena = misc.lena()
+    >>> scharr = np.array([[ -3-3j, 0-10j,  +3 -3j],
+    ...                    [-10+0j, 0+ 0j, +10 +0j],
+    ...                    [ -3+3j, 0+10j,  +3 +3j]]) # Gx + j*Gy
+    >>> grad = signal.convolve2d(lena, scharr, boundary='symm', mode='same')
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_mag, ax_ang) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_mag.imshow(np.absolute(grad), cmap='gray')
+    >>> ax_mag.set_title('Gradient magnitude')
+    >>> ax_mag.set_axis_off()
+    >>> ax_ang.imshow(np.angle(grad), cmap='hsv') # hsv is cyclic, like angles
+    >>> ax_ang.set_title('Gradient orientation')
+    >>> ax_ang.set_axis_off()
+    >>> fig.show()
+
     """
     in1 = asarray(in1)
     in2 = asarray(in2)
@@ -532,6 +718,34 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
     correlate2d : ndarray
         A 2-dimensional array containing a subset of the discrete linear
         cross-correlation of `in1` with `in2`.
+
+    Examples
+    --------
+    Use 2D cross-correlation to find the location of a template in a noisy
+    image:
+
+    >>> from scipy import signal
+    >>> from scipy import misc
+    >>> lena = misc.lena() - misc.lena().mean()
+    >>> template = np.copy(lena[235:295, 310:370]) # right eye
+    >>> template -= template.mean()
+    >>> lena = lena + np.random.randn(*lena.shape) * 50 # add noise
+    >>> corr = signal.correlate2d(lena, template, boundary='symm', mode='same')
+    >>> y, x = np.unravel_index(np.argmax(corr), corr.shape) # find the match
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_template, ax_corr) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_template.imshow(template, cmap='gray')
+    >>> ax_template.set_title('Template')
+    >>> ax_template.set_axis_off()
+    >>> ax_corr.imshow(corr, cmap='gray')
+    >>> ax_corr.set_title('Cross-correlation')
+    >>> ax_corr.set_axis_off()
+    >>> ax_orig.plot(x, y, 'ro')
+    >>> fig.show()
 
     """
     in1 = asarray(in1)
@@ -668,7 +882,7 @@ def lfiltic(b, a, y, x=None):
     Construct initial conditions for lfilter.
 
     Given a linear filter (b, a) and initial conditions on the output `y`
-    and the input `x`, return the inital conditions on the state vector zi
+    and the input `x`, return the initial conditions on the state vector zi
     which is used by `lfilter` to generate the output given the input.
 
     Parameters
@@ -707,9 +921,12 @@ def lfiltic(b, a, y, x=None):
     M = np.size(b) - 1
     K = max(M, N)
     y = asarray(y)
-    zi = zeros(K, y.dtype.char)
+    if y.dtype.kind in 'bui':
+        # ensure calculations are floating point
+        y = y.astype(np.float64)
+    zi = zeros(K, y.dtype)
     if x is None:
-        x = zeros(M, y.dtype.char)
+        x = zeros(M, y.dtype)
     else:
         x = asarray(x)
         L = np.size(x)
@@ -731,29 +948,42 @@ def lfiltic(b, a, y, x=None):
 def deconvolve(signal, divisor):
     """Deconvolves `divisor` out of `signal`.
 
+    Returns the quotient and remainder such that
+    ``signal = convolve(divisor, quotient) + remainder``
+
     Parameters
     ----------
-    signal : array
-        Signal input
-    divisor : array
-        Divisor input
+    signal : array_like
+        Signal data, typically a recorded signal
+    divisor : array_like
+        Divisor data, typically an impulse response or filter that was
+        applied to the original signal
 
     Returns
     -------
-    q : array
-        Quotient of the division
-    r : array
+    quotient : ndarray
+        Quotient, typically the recovered original signal
+    remainder : ndarray
         Remainder
 
     Examples
     --------
+    Deconvolve a signal that's been filtered:
+
     >>> from scipy import signal
-    >>> sig = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1,])
-    >>> filter = np.array([1,1,0])
-    >>> res = signal.convolve(sig, filter)
-    >>> signal.deconvolve(res, filter)
-    (array([ 0.,  0.,  0.,  0.,  0.,  1.,  1.,  1.,  1.]),
-     array([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]))
+    >>> original = [0, 1, 0, 0, 1, 1, 0, 0]
+    >>> impulse_response = [2, 1]
+    >>> recorded = signal.convolve(impulse_response, original)
+    >>> recorded
+    array([0, 2, 1, 0, 2, 3, 1, 0, 0])
+    >>> recovered, remainder = signal.deconvolve(recorded, impulse_response)
+    >>> recovered
+    array([ 0.,  1.,  0.,  0.,  1.,  1.,  0.,  0.])
+
+    See also
+    --------
+    numpy.polydiv : performs polynomial division (same operation, but
+                    also accepts poly1d objects)
 
     """
     num = atleast_1d(signal)
@@ -860,7 +1090,7 @@ def hilbert2(x, N=None):
     """
     x = atleast_2d(x)
     if len(x.shape) > 2:
-        raise ValueError("x must be rank 2.")
+        raise ValueError("x must be 2-D.")
     if iscomplexobj(x):
         raise ValueError("x must be real.")
     if N is None:
@@ -897,7 +1127,21 @@ def hilbert2(x, N=None):
 
 
 def cmplx_sort(p):
-    "sort roots based on magnitude."
+    """Sort roots based on magnitude.
+
+    Parameters
+    ----------
+    p : array_like
+        The roots to sort, as a 1-D array.
+
+    Returns
+    -------
+    p_sorted : ndarray
+        Sorted roots.
+    indx : ndarray
+        Array of indices needed to sort the input `p`.
+
+    """
     p = asarray(p)
     if iscomplexobj(p):
         indx = argsort(abs(p))
@@ -984,7 +1228,7 @@ def unique_roots(p, tol=1e-3, rtype='min'):
 
 def invres(r, p, k, tol=1e-3, rtype='avg'):
     """
-    Compute b(s) and a(s) from partial fraction expansion: r,p,k
+    Compute b(s) and a(s) from partial fraction expansion.
 
     If ``M = len(b)`` and ``N = len(a)``::
 
@@ -1123,8 +1367,8 @@ def residue(b, a, tol=1e-3, rtype='avg'):
                 term2 = polymul(bn, polyder(an, 1))
                 bn = polysub(term1, term2)
                 an = polymul(an, an)
-            r[indx + m - 1] = polyval(bn, pout[n]) / polyval(an, pout[n]) \
-                          / factorial(sig - m)
+            r[indx + m - 1] = (polyval(bn, pout[n]) / polyval(an, pout[n])
+                               / factorial(sig - m))
         indx += sig
     return r / rscale, p, k
 
@@ -1202,7 +1446,7 @@ def residuez(b, a, tol=1e-3, rtype='avg'):
 
 def invresz(r, p, k, tol=1e-3, rtype='avg'):
     """
-    Compute b(z) and a(z) from partial fraction expansion: r,p,k
+    Compute b(z) and a(z) from partial fraction expansion.
 
     If ``M = len(b)`` and ``N = len(a)``::
 
@@ -1211,7 +1455,7 @@ def invresz(r, p, k, tol=1e-3, rtype='avg'):
                 a(z)     a[0] + a[1] z**(-1) + ... + a[N-1] z**(-N+1)
 
                      r[0]                   r[-1]
-             = --------------- + ... + ---------------- + k[0] + k[1]z**(-1) ...
+             = --------------- + ... + ---------------- + k[0] + k[1]z**(-1)...
                (1-p[0]z**(-1))         (1-p[-1]z**(-1))
 
     If there are any repeated roots (closer than tol), then the partial
@@ -1223,7 +1467,7 @@ def invresz(r, p, k, tol=1e-3, rtype='avg'):
 
     See Also
     --------
-    residuez, unique_roots
+    residuez, unique_roots, invres
 
     """
     extra = asarray(k)
@@ -1323,7 +1567,7 @@ def resample(x, num, t=None, axis=0, window=None):
             W = window
         else:
             W = ifftshift(get_window(window, Nx))
-        newshape = ones(len(x.shape))
+        newshape = [1] * x.ndim
         newshape[axis] = len(W)
         W.shape = newshape
         X = X * W
@@ -1346,6 +1590,84 @@ def resample(x, num, t=None, axis=0, window=None):
     else:
         new_t = arange(0, num) * (t[1] - t[0]) * Nx / float(num) + t[0]
         return y, new_t
+
+
+def vectorstrength(events, period):
+    '''
+    Determine the vector strength of the events corresponding to the given
+    period.
+
+    The vector strength is a measure of phase synchrony, how well the
+    timing of the events is synchronized to a single period of a periodic
+    signal.
+
+    If multiple periods are used, calculate the vector strength of each.
+    This is called the "resonating vector strength".
+
+    Parameters
+    ----------
+    events : 1D array_like
+        An array of time points containing the timing of the events.
+    period : float or array_like
+        The period of the signal that the events should synchronize to.
+        The period is in the same units as `events`.  It can also be an array
+        of periods, in which case the outputs are arrays of the same length.
+
+    Returns
+    -------
+    strength : float or 1D array
+        The strength of the synchronization.  1.0 is perfect synchronization
+        and 0.0 is no synchronization.  If `period` is an array, this is also
+        an array with each element containing the vector strength at the
+        corresponding period.
+    phase : float or array
+        The phase that the events are most strongly synchronized to in radians.
+        If `period` is an array, this is also an array with each element
+        containing the phase for the corresponding period.
+
+    References
+    ----------
+    van Hemmen, JL, Longtin, A, and Vollmayr, AN. Testing resonating vector
+        strength: Auditory system, electric fish, and noise.
+        Chaos 21, 047508 (2011);
+        doi: 10.1063/1.3670512
+    van Hemmen, JL.  Vector strength after Goldberg, Brown, and von Mises:
+        biological and mathematical perspectives.  Biol Cybern.
+        2013 Aug;107(4):385-96. doi: 10.1007/s00422-013-0561-7.
+    van Hemmen, JL and Vollmayr, AN.  Resonating vector strength: what happens
+        when we vary the "probing" frequency while keeping the spike times
+        fixed.  Biol Cybern. 2013 Aug;107(4):491-94.
+        doi: 10.1007/s00422-013-0560-8
+    '''
+    events = asarray(events)
+    period = asarray(period)
+    if events.ndim > 1:
+        raise ValueError('events cannot have dimensions more than 1')
+    if period.ndim > 1:
+        raise ValueError('period cannot have dimensions more than 1')
+
+    # we need to know later if period was originally a scalar
+    scalarperiod = not period.ndim
+
+    events = atleast_2d(events)
+    period = atleast_2d(period)
+    if (period <= 0).any():
+        raise ValueError('periods must be positive')
+
+    # this converts the times to vectors
+    vectors = exp(dot(2j*pi/period.T, events))
+
+    # the vector strength is just the magnitude of the mean of the vectors
+    # the vector phase is the angle of the mean of the vectors
+    vectormean = mean(vectors, axis=1)
+    strength = abs(vectormean)
+    phase = angle(vectormean)
+
+    # if the original period was a scalar, return scalars
+    if scalarperiod:
+        strength = strength[0]
+        phase = phase[0]
+    return strength, phase
 
 
 def detrend(data, axis=-1, type='linear', bp=0):
@@ -1400,7 +1722,7 @@ def detrend(data, axis=-1, type='linear', bp=0):
         bp = sort(unique(r_[0, bp, N]))
         if np.any(bp > N):
             raise ValueError("Breakpoints must be less than length "
-                    "of data along given axis.")
+                             "of data along given axis.")
         Nreg = len(bp) - 1
         # Restructure data so that axis is along first dimension and
         #  all other dimensions are collapsed into second dimension
@@ -1517,10 +1839,10 @@ def lfilter_zi(b, a):
     # b to be 2D.
     b = np.atleast_1d(b)
     if b.ndim != 1:
-        raise ValueError("Numerator b must be rank 1.")
+        raise ValueError("Numerator b must be 1-D.")
     a = np.atleast_1d(a)
     if a.ndim != 1:
-        raise ValueError("Denominator a must be rank 1.")
+        raise ValueError("Denominator a must be 1-D.")
 
     while len(a) > 1 and a[0] == 0.0:
         a = a[1:]
@@ -1529,8 +1851,8 @@ def lfilter_zi(b, a):
 
     if a[0] != 1.0:
         # Normalize the coefficients so a[0] == 1.
-        a = a / a[0]
         b = b / a[0]
+        a = a / a[0]
 
     n = max(len(a), len(b))
 
@@ -1639,10 +1961,10 @@ def filtfilt(b, a, x, axis=-1, padtype='odd', padlen=None):
     if padtype not in ['even', 'odd', 'constant', None]:
         raise ValueError(("Unknown value '%s' given to padtype.  padtype must "
                          "be 'even', 'odd', 'constant', or None.") %
-                            padtype)
+                         padtype)
 
-    b = np.asarray(b)
-    a = np.asarray(a)
+    b = np.atleast_1d(b)
+    a = np.atleast_1d(a)
     x = np.asarray(x)
 
     ntaps = max(len(a), len(b))

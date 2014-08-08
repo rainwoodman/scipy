@@ -21,8 +21,9 @@ import numpy
 from numpy import array, asarray_chkfinite, asarray, diag, zeros, ones, \
         isfinite, inexact, nonzero, iscomplexobj, cast, flatnonzero, conj
 # Local imports
+from scipy.lib.six import xrange
 from scipy.linalg import calc_lwork
-from .misc import LinAlgError, _datacopied
+from .misc import LinAlgError, _datacopied, norm
 from .lapack import get_lapack_funcs
 from .blas import get_blas_funcs
 
@@ -71,6 +72,14 @@ def _geneig(a1, b1, left, right, overwrite_a, overwrite_b):
             vl = _make_complex_eigvecs(w, vl, t)
         if right:
             vr = _make_complex_eigvecs(w, vr, t)
+
+    # the eigenvectors returned by the lapack function are NOT normalized
+    for i in xrange(vr.shape[0]):
+        if right:
+            vr[:, i] /= norm(vr[:, i])
+        if left:
+            vl[:, i] /= norm(vl[:, i])
+
     if not (left or right):
         return w
     if left:
@@ -811,7 +820,7 @@ def hessenberg(a, calc_q=False, overwrite_a=False, check_finite=True):
         raise ValueError('expected square matrix')
     overwrite_a = overwrite_a or (_datacopied(a1, a))
     gehrd,gebal = get_lapack_funcs(('gehrd','gebal'), (a1,))
-    ba, lo, hi, pivscale, info = gebal(a1, permute=1, overwrite_a=overwrite_a)
+    ba, lo, hi, pivscale, info = gebal(a1, permute=0, overwrite_a=overwrite_a)
     if info < 0:
         raise ValueError('illegal value in %d-th argument of internal gebal '
                                                     '(hessenberg)' % -info)

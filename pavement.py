@@ -1,5 +1,5 @@
 """
-This paver file is intented to help with the release process as much as
+This paver file is intended to help with the release process as much as
 possible. It relies on virtualenv to generate 'bootstrap' environments as
 independent from the user system as possible (e.g. to make sure the sphinx doc
 is built against the built scipy, not an installed one).
@@ -112,10 +112,10 @@ finally:
 #-----------------------------------
 
 # Source of the release notes
-RELEASE = 'doc/release/0.13.0-notes.rst'
+RELEASE = 'doc/release/0.15.0-notes.rst'
 
 # Start/end of the log (from git)
-LOG_START = 'v0.12.0'
+LOG_START = 'v0.14.0'
 LOG_END = 'master'
 
 
@@ -154,7 +154,6 @@ SITECFG = {"sse3" : {'BLAS': 'None', 'LAPACK': 'None', 'ATLAS': r'C:\local\lib\y
 if sys.platform == "win32":
     WINE_PY26 = [r"C:\Python26\python26.exe"]
     WINE_PY27 = [r"C:\Python27\python27.exe"]
-    WINE_PY31 = [r"C:\Python31\python.exe"]
     WINE_PY32 = [r"C:\Python32\python.exe"]
     WINE_PY33 = [r"C:\Python33\python.exe"]
     WINDOWS_ENV = os.environ
@@ -162,7 +161,6 @@ if sys.platform == "win32":
 elif sys.platform == "darwin":
     WINE_PY26 = ["wine", os.environ['HOME'] + "/.wine/drive_c/Python26/python.exe"]
     WINE_PY27 = ["wine", os.environ['HOME'] + "/.wine/drive_c/Python27/python.exe"]
-    WINE_PY31 = ["wine", os.environ['HOME'] + "/.wine/drive_c/Python31/python.exe"]
     WINE_PY32 = ["wine", os.environ['HOME'] + "/.wine/drive_c/Python32/python.exe"]
     WINE_PY33 = ["wine", os.environ['HOME'] + "/.wine/drive_c/Python33/python.exe"]
     WINDOWS_ENV = os.environ
@@ -171,19 +169,17 @@ elif sys.platform == "darwin":
 else:
     WINE_PY26 = [os.environ['HOME'] + "/.wine/drive_c/Python26/python.exe"]
     WINE_PY27 = [os.environ['HOME'] + "/.wine/drive_c/Python27/python.exe"]
-    WINE_PY31 = [os.environ['HOME'] + "/.wine/drive_c/Python31/python.exe"],
     WINE_PY32 = [os.environ['HOME'] + "/.wine/drive_c/Python32/python.exe"],
     WINE_PY33 = [os.environ['HOME'] + "/.wine/drive_c/Python33/python.exe"],
     WINDOWS_ENV = os.environ
     MAKENSIS = ["wine", "makensis"]
-WINE_PYS = {'3.3':WINE_PY33, '3.2':WINE_PY32, '3.1':WINE_PY31,
+WINE_PYS = {'3.3':WINE_PY33, '3.2':WINE_PY32,
             '2.7':WINE_PY27, '2.6':WINE_PY26}
 
 # Framework Python locations on OS X
-MPKG_PYTHON = {"2.5": "/Library/Frameworks/Python.framework/Versions/2.5/bin/python",
+MPKG_PYTHON = {
         "2.6": "/Library/Frameworks/Python.framework/Versions/2.6/bin/python",
         "2.7": "/Library/Frameworks/Python.framework/Versions/2.7/bin/python",
-        "3.1": "/Library/Frameworks/Python.framework/Versions/3.1/bin/python3",
         "3.2": "/Library/Frameworks/Python.framework/Versions/3.2/bin/python3",
         "3.3": "/Library/Frameworks/Python.framework/Versions/3.3/bin/python3"}
 # Full path to the *static* gfortran runtime
@@ -196,10 +192,10 @@ LIBGFORTRAN_A_PATH = "/usr/local/lib/libgfortran.a"
 
 def parse_numpy_version(pyexec):
     if isinstance(pyexec, str):
-        cmd = [pyexec, "-c", "'import numpy; print numpy.version.version'"]
+        cmd = [pyexec, "-c", "'import numpy; print(numpy.version.version)'"]
     else:
         # sequence for pyexec
-        cmd = pyexec + ["-c", "'import numpy; print numpy.version.version'"]
+        cmd = pyexec + ["-c", "'import numpy; print(numpy.version.version)'"]
 
     # Execute in shell because launching python from python does not work
     # (hangs)
@@ -219,7 +215,7 @@ def bootstrap():
     """create virtualenv in ./install"""
     try:
         import virtualenv
-    except ImportError, e:
+    except ImportError:
         raise RuntimeError("virtualenv is needed for bootstrap")
 
     bdir = options.bootstrap_dir
@@ -300,6 +296,10 @@ def tarball_name(type='gztar'):
     root = 'scipy-%s' % FULLVERSION
     if type == 'gztar':
         return root + '.tar.gz'
+    elif type == 'xztar':
+        return root + '.tar.xz'
+    elif type == 'tar':
+        return root + '.tar'
     elif type == 'zip':
         return root + '.zip'
     raise ValueError("Unknown type %s" % type)
@@ -309,10 +309,22 @@ def sdist():
     # To be sure to bypass paver when building sdist... paver + scipy.distutils
     # do not play well together.
     sh('python setup.py sdist --formats=gztar,zip')
+    sh('python setup.py sdist --formats=tar')
+    if os.path.exists(os.path.join('dist', tarball_name("xztar"))):
+        os.unlink(os.path.join('dist', tarball_name("xztar")))
+    sh('xz %s' % os.path.join('dist', tarball_name("tar")), ignore_error=True)
 
     # Copy the superpack into installers dir
     if not os.path.exists(options.installers.installersdir):
         os.makedirs(options.installers.installersdir)
+
+    if not os.path.exists(os.path.join('dist', tarball_name("xztar"))):
+        warnings.warn("Could not create tar.xz! Do you have xz installed?")
+    else:
+        t = 'xztar'
+        source = os.path.join('dist', tarball_name(t))
+        target = os.path.join(options.installers.installersdir, tarball_name(t))
+        shutil.copy(source, target)
 
     for t in ['gztar', 'zip']:
         source = os.path.join('dist', tarball_name(t))
@@ -389,7 +401,15 @@ def bdist_superpack(options):
             os.remove(target)
         if not os.path.exists(os.path.dirname(target)):
             os.makedirs(os.path.dirname(target))
-        os.rename(source, target)
+
+        try:
+            os.rename(source, target)
+        except OSError:
+            # May be due to dev version having 'Unknown' in name, if git isn't
+            # found.  This can be the case when compiling under Wine.
+            ix = source.find('.dev-') + 5
+            source = source[:ix] + 'Unknown' + source[ix+7:]
+            os.rename(source, target)
 
     bdist_wininst_arch(pyver, 'nosse')
     copy_bdist("nosse")
@@ -427,7 +447,12 @@ def _bdist_wininst(pyver, cfg_env=None):
             cfg_env[k] = v
     else:
         cfg_env = WINDOWS_ENV
-    subprocess.check_call(cmd, env=cfg_env)
+    try:
+        subprocess.check_call(cmd, env=cfg_env)
+    except subprocess.CalledProcessError:
+        # Too many open files to compile in one go, so re-run.
+        print('RESTART WINDOWS BUILD.  See gh-2709.')
+        subprocess.check_call(cmd, env=cfg_env)
 
 
 #--------------------
@@ -486,8 +511,14 @@ def bdist_mpkg():
 def _build_mpkg(pyver):
     numver = parse_numpy_version(MPKG_PYTHON[pyver])
     numverstr = ".".join(["%i" % i for i in numver])
-    if not numver == (1, 5, 1):
-        raise ValueError("Scipy 0.9.x should be built against numpy 1.5.1, (detected %s)" % numverstr)
+    if pyver < "3.3":
+        # Numpy < 1.7 doesn't support Python 3.3
+        if not numver == (1, 5, 1):
+            raise ValueError("Scipy 0.14.x should be built against numpy "
+                             "1.5.1, (detected %s)" % numverstr)
+    else:
+        raise ValueError("Scipy 0.14.x should be built against numpy "
+                         "1.7.1, (detected %s) for Python >= 3.3" % numverstr)
 
     prepare_static_gfortran_runtime("build")
     # account for differences between Python 2.7.1 versions from python.org
@@ -497,8 +528,6 @@ def _build_mpkg(pyver):
         ldflags = "-undefined dynamic_lookup -bundle -arch i386 -arch ppc -Wl,-search_paths_first"
     ldflags += " -L%s" % os.path.join(os.path.dirname(__file__), "build")
 
-    if pyver == "2.5":
-        sh("CC=gcc-4.0 LDFLAGS='%s' %s setupegg.py bdist_mpkg" % (ldflags, MPKG_PYTHON[pyver]))
     sh("LDFLAGS='%s' %s setupegg.py bdist_mpkg" % (ldflags, MPKG_PYTHON[pyver]))
 
 
@@ -644,5 +673,5 @@ def write_log():
 
 @task
 def write_release_and_log():
-    write_release_task(os.path.join(options.installers.releasedir, 'README.rst'))
+    write_release_task(os.path.join(options.installers.releasedir, 'README'))
     write_log_task(os.path.join(options.installers.releasedir, 'Changelog'))

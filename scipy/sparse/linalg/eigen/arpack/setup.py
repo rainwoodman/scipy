@@ -3,12 +3,11 @@ from __future__ import division, print_function, absolute_import
 
 from os.path import join
 
-from scipy._build_utils import needs_g77_abi_wrapper
-
 
 def configuration(parent_package='',top_path=None):
     from numpy.distutils.system_info import get_info, NotFoundError
     from numpy.distutils.misc_util import Configuration
+    from scipy._build_utils import get_g77_abi_wrappers
 
     config = Configuration('arpack',parent_package,top_path)
 
@@ -23,25 +22,16 @@ def configuration(parent_package='',top_path=None):
     arpack_sources.extend([join('ARPACK','UTIL', '*.f')])
     arpack_sources.extend([join('ARPACK','LAPACK', '*.f')])
 
-    if needs_g77_abi_wrapper(lapack_opt):
-        arpack_sources += [join('ARPACK', 'FWRAPPERS', 'veclib_cabi_f.f'),
-                           join('ARPACK', 'FWRAPPERS', 'veclib_cabi_c.c')]
-    else:
-        arpack_sources += [join('ARPACK', 'FWRAPPERS', 'dummy.f')]
+    arpack_sources += get_g77_abi_wrappers(lapack_opt)
 
     config.add_library('arpack_scipy', sources=arpack_sources,
-                       include_dirs=[join('ARPACK', 'SRC')],
-                       depends=[join('ARPACK', 'FWRAPPERS',
-                                       'veclib_cabi_f.f'),
-                                  join('ARPACK', 'FWRAPPERS',
-                                       'veclib_cabi_c.c'),
-                                  join('ARPACK', 'FWRAPPERS',
-                                        'dummy.f')])
+                       include_dirs=[join('ARPACK', 'SRC')])
 
     config.add_extension('_arpack',
                          sources='arpack.pyf.src',
                          libraries=['arpack_scipy'],
-                         extra_info=lapack_opt
+                         extra_info=lapack_opt,
+                         depends=arpack_sources,
                          )
 
     config.add_data_dir('tests')

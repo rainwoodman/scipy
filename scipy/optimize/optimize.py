@@ -22,7 +22,7 @@ from __future__ import division, print_function, absolute_import
 __all__ = ['fmin', 'fmin_powell', 'fmin_bfgs', 'fmin_ncg', 'fmin_cg',
            'fminbound', 'brent', 'golden', 'bracket', 'rosen', 'rosen_der',
            'rosen_hess', 'rosen_hess_prod', 'brute', 'approx_fprime',
-           'line_search', 'check_grad', 'Result', 'show_options',
+           'line_search', 'check_grad', 'OptimizeResult', 'show_options',
            'OptimizeWarning']
 
 __docformat__ = "restructuredtext en"
@@ -32,8 +32,8 @@ import numpy
 from scipy.lib.six import callable
 from numpy import (atleast_1d, eye, mgrid, argmin, zeros, shape, squeeze,
                    vectorize, asarray, sqrt, Inf, asfarray, isinf)
-from .linesearch import (line_search_BFGS, line_search_wolfe1,
-                         line_search_wolfe2, line_search_wolfe2 as line_search)
+from .linesearch import (line_search_wolfe1, line_search_wolfe2,
+                         line_search_wolfe2 as line_search)
 
 
 # standard status messages of optimizers
@@ -68,7 +68,7 @@ class MemoizeJac(object):
             return self.jac
 
 
-class Result(dict):
+class OptimizeResult(dict):
     """ Represents the optimization result.
 
     Attributes
@@ -82,8 +82,10 @@ class Result(dict):
         underlying solver. Refer to `message` for details.
     message : str
         Description of the cause of the termination.
-    fun, jac, hess : ndarray
-        Values of objective function, Jacobian and Hessian (if available).
+    fun, jac, hess, hess_inv : ndarray
+        Values of objective function, Jacobian, Hessian or its inverse (if
+        available). The Hessians may be approximations, see the documentation
+        of the function in question.
     nfev, njev, nhev : int
         Number of evaluations of the objective functions and of its
         Jacobian and Hessian.
@@ -536,9 +538,9 @@ def _minimize_neldermead(func, x0, args=(), callback=None,
             print("         Iterations: %d" % iterations)
             print("         Function evaluations: %d" % fcalls[0])
 
-    result = Result(fun=fval, nit=iterations, nfev=fcalls[0],
-                    status=warnflag, success=(warnflag == 0), message=msg,
-                    x=x)
+    result = OptimizeResult(fun=fval, nit=iterations, nfev=fcalls[0],
+                            status=warnflag, success=(warnflag == 0),
+                            message=msg, x=x)
     if retall:
         result['allvecs'] = allvecs
     return result
@@ -710,7 +712,7 @@ def fmin_bfgs(f, x0, fprime=None, args=(), gtol=1e-5, norm=Inf,
     args : tuple, optional
         Extra arguments passed to f and fprime.
     gtol : float, optional
-        Gradient norm must be less than gtol before succesful termination.
+        Gradient norm must be less than gtol before successful termination.
     norm : float, optional
         Order of norm (Inf is max, -Inf is min)
     epsilon : int or ndarray, optional
@@ -747,7 +749,7 @@ def fmin_bfgs(f, x0, fprime=None, args=(), gtol=1e-5, norm=Inf,
         1 : Maximum number of iterations exceeded.
         2 : Gradient and/or function calls not changing.
     allvecs  :  list
-        Results at each iteration.  Only returned if retall is True.
+        `OptimizeResult` at each iteration.  Only returned if retall is True.
 
     See also
     --------
@@ -775,7 +777,7 @@ def fmin_bfgs(f, x0, fprime=None, args=(), gtol=1e-5, norm=Inf,
     res = _minimize_bfgs(f, x0, args, fprime, callback=callback, **opts)
 
     if full_output:
-        retlist = (res['x'], res['fun'], res['jac'], res['hess'],
+        retlist = (res['x'], res['fun'], res['jac'], res['hess_inv'],
                    res['nfev'], res['njev'], res['status'])
         if retall:
             retlist += (res['allvecs'], )
@@ -917,9 +919,9 @@ def _minimize_bfgs(fun, x0, args=(), jac=None, callback=None,
             print("         Function evaluations: %d" % func_calls[0])
             print("         Gradient evaluations: %d" % grad_calls[0])
 
-    result = Result(fun=fval, jac=gfk, hess=Hk, nfev=func_calls[0],
-                    njev=grad_calls[0], status=warnflag,
-                    success=(warnflag == 0), message=msg, x=xk)
+    result = OptimizeResult(fun=fval, jac=gfk, hess_inv=Hk, nfev=func_calls[0],
+                            njev=grad_calls[0], status=warnflag,
+                            success=(warnflag == 0), message=msg, x=xk)
     if retall:
         result['allvecs'] = allvecs
     return result
@@ -1199,9 +1201,9 @@ def _minimize_cg(fun, x0, args=(), jac=None, callback=None,
             print("         Function evaluations: %d" % func_calls[0])
             print("         Gradient evaluations: %d" % grad_calls[0])
 
-    result = Result(fun=fval, jac=gfk, nfev=func_calls[0],
-                    njev=grad_calls[0], status=warnflag,
-                    success=(warnflag == 0), message=msg, x=xk)
+    result = OptimizeResult(fun=fval, jac=gfk, nfev=func_calls[0],
+                            njev=grad_calls[0], status=warnflag,
+                            success=(warnflag == 0), message=msg, x=xk)
     if retall:
         result['allvecs'] = allvecs
     return result
@@ -1289,7 +1291,7 @@ def fmin_ncg(f, x0, fprime, fhess_p=None, fhess=None, args=(), avextol=1e-5,
     2. scipy.optimize.fmin_ncg is only for unconstrained minimization
         while scipy.optimize.fmin_tnc is for unconstrained minimization
         or box constrained minimization. (Box constraints give
-        lower and upper bounds for each variable seperately.)
+        lower and upper bounds for each variable separately.)
 
     References
     ----------
@@ -1467,9 +1469,9 @@ def _minimize_newtoncg(fun, x0, args=(), jac=None, hess=None, hessp=None,
             print("         Gradient evaluations: %d" % gcalls[0])
             print("         Hessian evaluations: %d" % hcalls)
 
-    result = Result(fun=fval, jac=gfk, nfev=fcalls[0], njev=gcalls[0],
-                    nhev=hcalls, status=warnflag, success=(warnflag == 0),
-                    message=msg, x=xk)
+    result = OptimizeResult(fun=fval, jac=gfk, nfev=fcalls[0], njev=gcalls[0],
+                            nhev=hcalls, status=warnflag,
+                            success=(warnflag == 0), message=msg, x=xk)
     if retall:
         result['allvecs'] = allvecs
     return result
@@ -1526,7 +1528,7 @@ def fminbound(func, x1, x2, args=(), xtol=1e-5, maxfun=500,
     for auto-bracketing).
 
     """
-    options = {'xtol': xtol,
+    options = {'xatol': xtol,
                'maxiter': maxfun,
                'disp': disp}
 
@@ -1538,7 +1540,7 @@ def fminbound(func, x1, x2, args=(), xtol=1e-5, maxfun=500,
 
 
 def _minimize_scalar_bounded(func, bounds, args=(),
-                             xtol=1e-5, maxiter=500, disp=0,
+                             xatol=1e-5, maxiter=500, disp=0,
                              **unknown_options):
     _check_unknown_options(unknown_options)
     maxfun = maxiter
@@ -1570,7 +1572,7 @@ def _minimize_scalar_bounded(func, bounds, args=(),
 
     ffulc = fnfc = fx
     xm = 0.5 * (a + b)
-    tol1 = sqrt_eps * numpy.abs(xf) + xtol / 3.0
+    tol1 = sqrt_eps * numpy.abs(xf) + xatol / 3.0
     tol2 = 2.0 * tol1
 
     if disp > 2:
@@ -1642,7 +1644,7 @@ def _minimize_scalar_bounded(func, bounds, args=(),
                 fulc, ffulc = x, fu
 
         xm = 0.5 * (a + b)
-        tol1 = sqrt_eps * numpy.abs(xf) + xtol / 3.0
+        tol1 = sqrt_eps * numpy.abs(xf) + xatol / 3.0
         tol2 = 2.0 * tol1
 
         if num >= maxfun:
@@ -1651,13 +1653,13 @@ def _minimize_scalar_bounded(func, bounds, args=(),
 
     fval = fx
     if disp > 0:
-        _endprint(x, flag, fval, maxfun, xtol, disp)
+        _endprint(x, flag, fval, maxfun, xatol, disp)
 
-    result = Result(fun=fval, status=flag, success=(flag == 0),
-                    message={0: 'Solution found.',
-                             1: 'Maximum number of function calls '
-                                'reached.'}.get(flag, ''),
-                    x=xf, nfev=num)
+    result = OptimizeResult(fun=fval, status=flag, success=(flag == 0),
+                            message={0: 'Solution found.',
+                                     1: 'Maximum number of function calls '
+                                        'reached.'}.get(flag, ''),
+                            x=xf, nfev=num)
 
     return result
 
@@ -1893,7 +1895,7 @@ def _minimize_scalar_brent(func, brack=None, args=(),
     brent.set_bracket(brack)
     brent.optimize()
     x, fval, nit, nfev = brent.get_result(full_output=True)
-    return Result(fun=fval, x=x, nit=nit, nfev=nfev)
+    return OptimizeResult(fun=fval, x=x, nit=nit, nfev=nfev)
 
 
 def golden(func, args=(), brack=None, tol=_epsilon, full_output=0):
@@ -1998,7 +2000,7 @@ def _minimize_scalar_golden(func, brack=None, args=(),
         xmin = x2
         fval = f2
 
-    return Result(fun=fval, nfev=funcalls, x=xmin)
+    return OptimizeResult(fun=fval, nfev=funcalls, x=xmin)
 
 
 def bracket(func, xa=0.0, xb=1.0, args=(), grow_limit=110.0, maxiter=1000):
@@ -2348,9 +2350,9 @@ def _minimize_powell(func, x0, args=(), callback=None,
 
     x = squeeze(x)
 
-    result = Result(fun=fval, direc=direc, nit=iter, nfev=fcalls[0],
-                    status=warnflag, success=(warnflag == 0), message=msg,
-                    x=x)
+    result = OptimizeResult(fun=fval, direc=direc, nit=iter, nfev=fcalls[0],
+                            status=warnflag, success=(warnflag == 0),
+                            message=msg, x=x)
     if retall:
         result['allvecs'] = allvecs
     return result
@@ -2566,7 +2568,7 @@ def brute(func, ranges, args=(), Ns=20, full_output=0, finish=fmin,
         return xmin
 
 
-def show_options(solver, method=None):
+def show_options(solver=None, method=None):
     """
     Show documentation for additional options of optimization solvers.
 
@@ -2576,7 +2578,8 @@ def show_options(solver, method=None):
     Parameters
     ----------
     solver : str
-        Type of optimization solver. One of {`minimize`, `root`}.
+        Type of optimization solver. One of 'minimize', 'minimize_scalar',
+        'root', or 'linprog'.
     method : str, optional
         If not given, shows all methods of the specified solver. Otherwise,
         show only the options for the specified method. Valid values
@@ -2586,9 +2589,10 @@ def show_options(solver, method=None):
     Notes
     -----
 
-    ** minimize options
+    **Minimize options**
 
-    * BFGS options:
+    *BFGS* options:
+
         gtol : float
             Gradient norm must be less than `gtol` before successful
             termination.
@@ -2597,7 +2601,8 @@ def show_options(solver, method=None):
         eps : float or ndarray
             If `jac` is approximated, use this value for the step size.
 
-    * Nelder-Mead options:
+    *Nelder-Mead* options:
+
         xtol : float
             Relative error in solution `xopt` acceptable for convergence.
         ftol : float
@@ -2605,14 +2610,16 @@ def show_options(solver, method=None):
         maxfev : int
             Maximum number of function evaluations to make.
 
-    * Newton-CG options:
+    *Newton-CG* options:
+
         xtol : float
             Average relative error in solution `xopt` acceptable for
             convergence.
         eps : float or ndarray
             If `jac` is approximated, use this value for the step size.
 
-    * CG options:
+    *CG* options:
+
         gtol : float
             Gradient norm must be less than `gtol` before successful
             termination.
@@ -2621,7 +2628,8 @@ def show_options(solver, method=None):
         eps : float or ndarray
             If `jac` is approximated, use this value for the step size.
 
-    * Powell options:
+    *Powell* options:
+
         xtol : float
             Relative error in solution `xopt` acceptable for convergence.
         ftol : float
@@ -2631,7 +2639,8 @@ def show_options(solver, method=None):
         direc : ndarray
             Initial set of direction vectors for the Powell method.
 
-    * Anneal options:
+    *Anneal* options:
+
         ftol : float
             Relative error in ``fun(x)`` acceptable for convergence.
         schedule : str
@@ -2658,7 +2667,8 @@ def show_options(solver, method=None):
         dwell : int
             The number of times to search the space at each temperature.
 
-    * L-BFGS-B options:
+    *L-BFGS-B* options:
+
         ftol : float
             The iteration stops when ``(f^k -
             f^{k+1})/max{|f^k|,|f^{k+1}|,1} <= ftol``.
@@ -2666,15 +2676,20 @@ def show_options(solver, method=None):
             The iteration will stop when ``max{|proj g_i | i = 1, ..., n}
             <= gtol`` where ``pg_i`` is the i-th component of the
             projected gradient.
+        eps : float or ndarray
+            If `jac` is approximated, use this value for the step size.            
         maxcor : int
             The maximum number of variable metric corrections used to
             define the limited memory matrix. (The limited memory BFGS
             method does not store the full hessian but uses this many terms
             in an approximation to it.)
-        maxiter : int
+        maxfun : int
             Maximum number of function evaluations.
+        maxiter : int
+            Maximum number of iterations.
 
-    * TNC options:
+    *TNC* options:
+
         ftol : float
             Precision goal for the value of f in the stoping criterion.
             If ftol < 0.0, ftol is set to 0.0 defaults to -1.
@@ -2693,7 +2708,7 @@ def show_options(solver, method=None):
             factors are up-low for interval bounded variables and
             1+|x] fo the others.  Defaults to None
         offset : float
-            Value to substract from each variable.  If None, the
+            Value to subtract from each variable.  If None, the
             offsets are (up+low)/2 for interval bounded variables
             and x for the others.
         maxCGit : int
@@ -2721,7 +2736,8 @@ def show_options(solver, method=None):
             rescaling.  If 0, rescale at each iteration.  If a large
             value, never rescale.  If < 0, rescale is set to 1.3.
 
-    * COBYLA options:
+    *COBYLA* options:
+
         tol : float
             Final accuracy in the optimization (not precisely guaranteed).
             This is a lower bound on the size of the trust region.
@@ -2729,8 +2745,11 @@ def show_options(solver, method=None):
             Reasonable initial changes to the variables.
         maxfev : int
             Maximum number of function evaluations.
+        catol : float
+            Absolute tolerance for constraint violations (default: 1e-6).
 
-    * SLSQP options:
+    *SLSQP* options:
+
         ftol : float
             Precision goal for the value of f in the stopping criterion.
         eps : float
@@ -2738,7 +2757,8 @@ def show_options(solver, method=None):
         maxiter : int
             Maximum number of iterations.
 
-    * dogleg options:
+    *dogleg* options:
+
         initial_trust_radius : float
             Initial trust-region radius.
         max_trust_radius : float
@@ -2750,12 +2770,34 @@ def show_options(solver, method=None):
             Gradient norm must be less than `gtol` before successful
             termination.
 
-    * trust-ncg options:
-        see dogleg options.
+    *trust-ncg* options:
 
-    ** root options
+        See dogleg options.
 
-    * hybrd options:
+
+    **minimize_scalar options**
+
+    *brent* options:
+
+        xtol : float
+
+            Relative error in solution `xopt` acceptable for convergence.
+
+    *bounded* options:
+
+        xatol : float
+            Absolute error in solution `xopt` acceptable for convergence.
+
+    *golden* options:
+
+        xtol : float
+            Relative error in solution `xopt` acceptable for convergence.
+
+
+    **root options**
+
+    *hybrd* options:
+
         col_deriv : bool
             Specify whether the Jacobian function computes derivatives down
             the columns (faster, because there is no transpose operation).
@@ -2782,7 +2824,8 @@ def show_options(solver, method=None):
             N positive entries that serve as a scale factors for the
             variables.
 
-    * LM options:
+    *LM* options:
+
         col_deriv : bool
             non-zero to specify that the Jacobian function computes derivatives
             down the columns (faster, because there is no transpose operation).
@@ -2793,7 +2836,7 @@ def show_options(solver, method=None):
         gtol : float
             Orthogonality desired between the function vector and the columns
             of the Jacobian.
-        maxfev : int
+        maxiter : int
             The maximum number of calls to the function. If zero, then
             100*(N+1) is the maximum where N is the number of elements in x0.
         epsfcn : float
@@ -2807,7 +2850,8 @@ def show_options(solver, method=None):
         diag : sequence
             N positive entries that serve as a scale factors for the variables.
 
-    * Broyden1 options:
+    *Broyden1* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -2859,7 +2903,8 @@ def show_options(solver, method=None):
                     Maximum rank for the Broyden matrix.
                     Default is infinity (ie., no rank reduction).
 
-    * Broyden2 options:
+    *Broyden2* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -2887,31 +2932,33 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                alpha : float, optional
-                    Initial guess for the Jacobian is (-1/alpha).
-                reduction_method : str or tuple, optional
-                    Method used in ensuring that the rank of the Broyden
-                    matrix stays low. Can either be a string giving the
-                    name of the method, or a tuple of the form ``(method,
-                    param1, param2, ...)`` that gives the name of the
-                    method and values for additional parameters.
 
-                    Methods available:
-                        - ``restart``: drop all matrix columns. Has no
-                            extra parameters.
-                        - ``simple``: drop oldest matrix column. Has no
-                            extra parameters.
-                        - ``svd``: keep only the most significant SVD
-                            components.
-                          Extra parameters:
-                              - ``to_retain`: number of SVD components to
-                                  retain when rank reduction is done.
-                                  Default is ``max_rank - 2``.
-                max_rank : int, optional
-                    Maximum rank for the Broyden matrix.
-                    Default is infinity (ie., no rank reduction).
+            alpha : float, optional
+                Initial guess for the Jacobian is (-1/alpha).
+            reduction_method : str or tuple, optional
+                Method used in ensuring that the rank of the Broyden
+                matrix stays low. Can either be a string giving the
+                name of the method, or a tuple of the form ``(method,
+                param1, param2, ...)`` that gives the name of the
+                method and values for additional parameters.
 
-    * Anderson options:
+                Methods available:
+                    - ``restart``: drop all matrix columns. Has no
+                        extra parameters.
+                    - ``simple``: drop oldest matrix column. Has no
+                        extra parameters.
+                    - ``svd``: keep only the most significant SVD
+                        components.
+                      Extra parameters:
+                          - ``to_retain`: number of SVD components to
+                              retain when rank reduction is done.
+                              Default is ``max_rank - 2``.
+            max_rank : int, optional
+                Maximum rank for the Broyden matrix.
+                Default is infinity (ie., no rank reduction).
+
+    *Anderson* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -2939,15 +2986,17 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                alpha : float, optional
-                    Initial guess for the Jacobian is (-1/alpha).
-                M : float, optional
-                    Number of previous vectors to retain. Defaults to 5.
-                w0 : float, optional
-                    Regularization parameter for numerical stability.
-                    Compared to unity, good values of the order of 0.01.
 
-    * LinearMixing options:
+            alpha : float, optional
+                Initial guess for the Jacobian is (-1/alpha).
+            M : float, optional
+                Number of previous vectors to retain. Defaults to 5.
+            w0 : float, optional
+                Regularization parameter for numerical stability.
+                Compared to unity, good values of the order of 0.01.
+
+    *LinearMixing* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -2975,10 +3024,12 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                alpha : float, optional
-                    initial guess for the jacobian is (-1/alpha).
 
-    * DiagBroyden options:
+            alpha : float, optional
+                initial guess for the jacobian is (-1/alpha).
+
+    *DiagBroyden* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -3006,10 +3057,12 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                alpha : float, optional
-                    initial guess for the jacobian is (-1/alpha).
 
-    * ExcitingMixing options:
+            alpha : float, optional
+                initial guess for the jacobian is (-1/alpha).
+
+    *ExcitingMixing* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -3037,13 +3090,15 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                alpha : float, optional
-                    Initial Jacobian approximation is (-1/alpha).
-                alphamax : float, optional
-                    The entries of the diagonal Jacobian are kept in the range
-                    ``[alpha, alphamax]``.
 
-    * Krylov options:
+            alpha : float, optional
+                Initial Jacobian approximation is (-1/alpha).
+            alphamax : float, optional
+                The entries of the diagonal Jacobian are kept in the range
+                ``[alpha, alphamax]``.
+
+    *Krylov* options:
+
         nit : int, optional
             Number of iterations to make. If omitted (default), make as many
             as required to meet tolerances.
@@ -3071,54 +3126,88 @@ def show_options(solver, method=None):
             'armijo'.
         jac_options : dict, optional
             Options for the respective Jacobian approximation.
-                rdiff : float, optional
-                    Relative step size to use in numerical differentiation.
-                method : {'lgmres', 'gmres', 'bicgstab', 'cgs', 'minres'} or
-                    function
-                    Krylov method to use to approximate the Jacobian.
-                    Can be a string, or a function implementing the same
-                    interface as the iterative solvers in
-                    `scipy.sparse.linalg`.
 
-                    The default is `scipy.sparse.linalg.lgmres`.
-                inner_M : LinearOperator or InverseJacobian
-                    Preconditioner for the inner Krylov iteration.
-                    Note that you can use also inverse Jacobians as (adaptive)
-                    preconditioners. For example,
+            rdiff : float, optional
+                Relative step size to use in numerical differentiation.
+            method : {'lgmres', 'gmres', 'bicgstab', 'cgs', 'minres'} or function
+                Krylov method to use to approximate the Jacobian.
+                Can be a string, or a function implementing the same
+                interface as the iterative solvers in
+                `scipy.sparse.linalg`.
 
-                    >>> jac = BroydenFirst()
-                    >>> kjac = KrylovJacobian(inner_M=jac.inverse).
+                The default is `scipy.sparse.linalg.lgmres`.
+            inner_M : LinearOperator or InverseJacobian
+                Preconditioner for the inner Krylov iteration.
+                Note that you can use also inverse Jacobians as (adaptive)
+                preconditioners. For example,
 
-                    If the preconditioner has a method named 'update', it will
-                    be called as ``update(x, f)`` after each nonlinear step,
-                    with ``x`` giving the current point, and ``f`` the current
-                    function value.
-                inner_tol, inner_maxiter, ...
-                    Parameters to pass on to the "inner" Krylov solver.
-                    See `scipy.sparse.linalg.gmres` for details.
-                outer_k : int, optional
-                    Size of the subspace kept across LGMRES nonlinear
-                    iterations.
+                >>> jac = BroydenFirst()
+                >>> kjac = KrylovJacobian(inner_M=jac.inverse).
 
-                    See `scipy.sparse.linalg.lgmres` for details.
+                If the preconditioner has a method named 'update', it will
+                be called as ``update(x, f)`` after each nonlinear step,
+                with ``x`` giving the current point, and ``f`` the current
+                function value.
+            inner_tol, inner_maxiter, ...
+                Parameters to pass on to the "inner" Krylov solver.
+                See `scipy.sparse.linalg.gmres` for details.
+            outer_k : int, optional
+                Size of the subspace kept across LGMRES nonlinear
+                iterations.
+
+                See `scipy.sparse.linalg.lgmres` for details.
+
+    **linprog options**
+
+    *simplex* options:
+
+        maxiter : int, optional
+            Maximum number of iterations to make.
+
+        tol : float, optional
+            The tolerance which determines when the Phase 1 objective is
+            sufficiently close to zero to be considered a basic feasible
+            solution or when the Phase 2 objective coefficients are close
+            enough to positive for the objective to be considered optimal.
+
+        bland : bool, optional
+            If True, choose pivots using Bland's rule.  In problems which
+            fail to converge due to cycling, using Bland's rule can provide
+            convergence at the expense of a less optimal path about the simplex.
 
     """
+    import textwrap
+
+    if solver is None:
+        print("\nminimize")
+        print("--------\n")
+        show_options('minimize')
+        print("\nminimize_scalar")
+        print("---------------\n")
+        show_options('minimize_scalar')
+        print("\nroot")
+        print("----\n")
+        show_options('root')
+        print('\nlinprog')
+        print('-------\n')
+        show_options('linprog')
+        return
+
     solver = solver.lower()
-    if solver not in ('minimize', 'root'):
+    if solver not in ('minimize', 'minimize_scalar', 'root', 'linprog'):
         raise ValueError('Unknown solver.')
 
     solvers_doc = [s.strip()
-                   for s in show_options.__doc__.split('** ')[1:]]
+                   for s in show_options.__doc__.split('    **')[1:]]
     solver_doc = [s for s in solvers_doc
-                  if s.lower().startswith(solver)]
+                  if s.lower().startswith(solver + " options")]
     if method is None:
-        doc = solver_doc
+        doc = ['    **'] + solver_doc
     else:
-        doc = solver_doc[0].split('* ')[1:]
-        doc = [s.strip() for s in doc]
-        doc = [s for s in doc if s.lower().startswith(method.lower())]
+        doc = solver_doc[0].split('    *')[1:]
+        doc = ['        *'] + [s for s in doc if s.lower().startswith(method.lower())]
 
-    print('\n'.join(doc))
+    print(textwrap.dedent(''.join(doc)).rstrip())
 
     return
 

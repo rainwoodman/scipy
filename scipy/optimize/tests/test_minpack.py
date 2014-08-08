@@ -3,13 +3,14 @@ Unit tests for optimization routines from minpack.py.
 """
 from __future__ import division, print_function, absolute_import
 
-from numpy.testing import assert_, assert_almost_equal, assert_array_equal, \
-        assert_array_almost_equal, TestCase, run_module_suite, assert_raises, \
-        assert_allclose
+from numpy.testing import (assert_, assert_almost_equal, assert_array_equal,
+        assert_array_almost_equal, TestCase, run_module_suite, assert_raises,
+        assert_allclose)
 import numpy as np
 from numpy import array, float64, matrix
 
 from scipy import optimize
+from scipy.special import lambertw
 from scipy.optimize.minpack import leastsq, curve_fit, fixed_point
 
 
@@ -143,7 +144,7 @@ class TestFSolve(TestCase):
         assert_raises(TypeError, optimize.fsolve, func, x0=[0,1], fprime=deriv_func)
 
     def test_float32(self):
-        func = lambda x: np.array([x[0] - 1000, x[1] - 10000], dtype=np.float32)**2
+        func = lambda x: np.array([x[0] - 100, x[1] - 1000], dtype=np.float32)**2
         p = optimize.fsolve(func, np.array([1, 1], np.float32))
         assert_allclose(func(p), [0, 0], atol=1e-3)
 
@@ -317,11 +318,79 @@ class TestCurveFit(TestCase):
         assert_array_almost_equal(pcov, [[0.0852, -0.1260], [-0.1260, 0.1912]],
                                   decimal=4)
 
+    def test_regression_2639(self):
+        # This test fails if epsfcn in leastsq is too large.
+        x = [574.14200000000005, 574.154, 574.16499999999996,
+             574.17700000000002, 574.18799999999999, 574.19899999999996,
+             574.21100000000001, 574.22199999999998, 574.23400000000004,
+             574.245]
+        y = [859.0, 997.0, 1699.0, 2604.0, 2013.0, 1964.0, 2435.0,
+             1550.0, 949.0, 841.0]
+        guess = [574.1861428571428, 574.2155714285715, 1302.0, 1302.0,
+                 0.0035019999999983615, 859.0]
+        good = [5.74177150e+02, 5.74209188e+02, 1.74187044e+03, 1.58646166e+03,
+                1.0068462e-02, 8.57450661e+02]
+
+        def f_double_gauss(x, x0, x1, A0, A1, sigma, c):
+            return (A0*np.exp(-(x-x0)**2/(2.*sigma**2))
+                    + A1*np.exp(-(x-x1)**2/(2.*sigma**2)) + c)
+        popt, pcov = curve_fit(f_double_gauss, x, y, guess, maxfev=10000)
+        assert_allclose(popt, good, rtol=1e-5)
+
+    def test_pcov(self):
+        xdata = np.array([0, 1, 2, 3, 4, 5])
+        ydata = np.array([1, 1, 5, 7, 8, 12])
+        sigma = np.array([1, 2, 1, 2, 1, 2])
+
+        def f(x, a, b):
+            return a*x + b
+
+        popt, pcov = curve_fit(f, xdata, ydata, p0=[2, 0], sigma=sigma)
+        perr_scaled = np.sqrt(np.diag(pcov))
+        assert_allclose(perr_scaled, [0.20659803, 0.57204404], rtol=1e-3)
+
+        popt, pcov = curve_fit(f, xdata, ydata, p0=[2, 0], sigma=3*sigma)
+        perr_scaled = np.sqrt(np.diag(pcov))
+        assert_allclose(perr_scaled, [0.20659803, 0.57204404], rtol=1e-3)
+
+        popt, pcov = curve_fit(f, xdata, ydata, p0=[2, 0], sigma=sigma,
+                               absolute_sigma=True)
+        perr = np.sqrt(np.diag(pcov))
+        assert_allclose(perr, [0.30714756, 0.85045308], rtol=1e-3)
+
+        popt, pcov = curve_fit(f, xdata, ydata, p0=[2, 0], sigma=3*sigma,
+                               absolute_sigma=True)
+        perr = np.sqrt(np.diag(pcov))
+        assert_allclose(perr, [3*0.30714756, 3*0.85045308], rtol=1e-3)
+
+        # infinite variances
+
+        def f_flat(x, a, b):
+            return a*x
+
+        popt, pcov = curve_fit(f_flat, xdata, ydata, p0=[2, 0], sigma=sigma)
+        assert_(pcov.shape == (2, 2))
+        pcov_expected = np.array([np.inf]*4).reshape(2, 2)
+        assert_array_equal(pcov, pcov_expected)
+
+        popt, pcov = curve_fit(f, xdata[:2], ydata[:2], p0=[2, 0])
+        assert_(pcov.shape == (2, 2))
+        assert_array_equal(pcov, pcov_expected)
+
+    def test_array_like(self):
+        # Test sequence input.  Regression test for gh-3037.
+        def f_linear(x, a, b):
+            return a*x + b
+
+        x = [1, 2, 3, 4]
+        y = [2, 4, 6, 8]
+        assert_allclose(curve_fit(f_linear, x, y)[0], [2, 0], atol=1e-10)
+
 
 class TestFixedPoint(TestCase):
 
     def test_scalar_trivial(self):
-        """f(x) = 2x; fixed point should be x=0"""
+        # f(x) = 2x; fixed point should be x=0
         def func(x):
             return 2.0*x
         x0 = 1.0
@@ -329,7 +398,7 @@ class TestFixedPoint(TestCase):
         assert_almost_equal(x, 0.0)
 
     def test_scalar_basic1(self):
-        """f(x) = x**2; x0=1.05; fixed point should be x=1"""
+        # f(x) = x**2; x0=1.05; fixed point should be x=1
         def func(x):
             return x**2
         x0 = 1.05
@@ -337,7 +406,7 @@ class TestFixedPoint(TestCase):
         assert_almost_equal(x, 1.0)
 
     def test_scalar_basic2(self):
-        """f(x) = x**0.5; x0=1.05; fixed point should be x=1"""
+        # f(x) = x**0.5; x0=1.05; fixed point should be x=1
         def func(x):
             return x**0.5
         x0 = 1.05
@@ -356,7 +425,7 @@ class TestFixedPoint(TestCase):
         assert_almost_equal(x, [0.0, 0.0])
 
     def test_array_basic1(self):
-        """f(x) = c * x**2; fixed point should be x=1/c"""
+        # f(x) = c * x**2; fixed point should be x=1/c
         def func(x, c):
             return c * x**2
         c = array([0.75, 1.0, 1.25])
@@ -369,13 +438,20 @@ class TestFixedPoint(TestCase):
         assert_almost_equal(x, 1.0/c)
 
     def test_array_basic2(self):
-        """f(x) = c * x**0.5; fixed point should be x=c**2"""
+        # f(x) = c * x**0.5; fixed point should be x=c**2
         def func(x, c):
             return c * x**0.5
         c = array([0.75, 1.0, 1.25])
         x0 = [0.8, 1.1, 1.1]
         x = fixed_point(func, x0, args=(c,))
         assert_almost_equal(x, c**2)
+
+    def test_lambertw(self):
+        # python-list/2010-December/594592.html
+        xxroot = fixed_point(lambda xx: np.exp(-2.0*xx)/2.0, 1.0,
+                args=(), xtol=1e-12, maxiter=500)
+        assert_allclose(xxroot, np.exp(-2.0*xxroot)/2.0)
+        assert_allclose(xxroot, lambertw(1)/2)
 
 
 if __name__ == "__main__":

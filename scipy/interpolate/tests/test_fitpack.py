@@ -1,11 +1,19 @@
 from __future__ import division, print_function, absolute_import
 
+import os
+
 import numpy as np
-from numpy.testing import assert_equal, assert_allclose, assert_, \
-    TestCase, assert_raises
+from numpy.testing import (assert_equal, assert_allclose, assert_,
+    TestCase, assert_raises, run_module_suite, assert_almost_equal)
 from numpy import array, asarray, pi, sin, cos, arange, dot, ravel, sqrt, round
-from scipy.interpolate.fitpack import splrep, splev, bisplrep, bisplev, \
-     sproot, splprep, splint, spalde, splder, splantider, insert
+from scipy import interpolate
+from scipy.interpolate.fitpack import (splrep, splev, bisplrep, bisplev,
+     sproot, splprep, splint, spalde, splder, splantider, insert, dblint)
+
+
+def data_file(basename):
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                        'data', basename)
 
 
 def norm2(x):
@@ -292,7 +300,10 @@ class TestSplder(object):
             dy = splev(xx, self.spl, n)
             spl2 = splder(self.spl, n)
             dy2 = splev(xx, spl2)
-            assert_allclose(dy, dy2)
+            if n == 1:
+                assert_allclose(dy, dy2, rtol=2e-6)
+            else:
+                assert_allclose(dy, dy2)
 
     def test_splantider_vs_splint(self):
         # Check antiderivative vs. FITPACK
@@ -326,15 +337,41 @@ class TestSplder(object):
         assert_raises(ValueError, splder, spl2, 1)
 
 
-def test_bisplrep_overflow():
-    a = np.linspace(0, 1, 620)
-    b = np.linspace(0, 1, 620)
-    x, y = np.meshgrid(a, b)
-    z = np.random.rand(*x.shape)
-    assert_raises(OverflowError, bisplrep, x.ravel(), y.ravel(), z.ravel(), s=0)
+class TestBisplrep(object):
+    def test_overflow(self):
+        a = np.linspace(0, 1, 620)
+        b = np.linspace(0, 1, 620)
+        x, y = np.meshgrid(a, b)
+        z = np.random.rand(*x.shape)
+        assert_raises(OverflowError, bisplrep, x.ravel(), y.ravel(), z.ravel(), s=0)
+
+    def test_regression_1310(self):
+        # Regression test for gh-1310
+        data = np.load(data_file('bug-1310.npz'))['data']
+
+        # Shouldn't crash -- the input data triggers work array sizes
+        # that caused previously some data to not be aligned on
+        # sizeof(double) boundaries in memory, which made the Fortran
+        # code to crash when compiled with -O3
+        bisplrep(data[:,0], data[:,1], data[:,2], kx=3, ky=3, s=0,
+                 full_output=True)
+
+
+def test_dblint():
+    # Basic test to see it runs and gives the correct result on a trivial
+    # problem.  Note that `dblint` is not exposed in the interpolate namespace.
+    x = np.linspace(0, 1)
+    y = np.linspace(0, 1)
+    xx, yy = np.meshgrid(x, y)
+    rect = interpolate.RectBivariateSpline(x, y, 4 * xx * yy)
+    tck = list(rect.tck)
+    tck.extend(rect.degrees)
+
+    assert_almost_equal(dblint(0, 1, 0, 1, tck), 1)
+    assert_almost_equal(dblint(0, 0.5, 0, 1, tck), 0.25)
+    assert_almost_equal(dblint(0.5, 1, 0, 1, tck), 0.75)
+    assert_almost_equal(dblint(-100, 100, -100, 100, tck), 1)
 
 
 if __name__ == "__main__":
-    __put_prints = True
-    import nose
-    nose.runmodule()
+    run_module_suite()

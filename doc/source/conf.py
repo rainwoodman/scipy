@@ -50,7 +50,7 @@ master_doc = 'index'
 
 # General substitutions.
 project = 'SciPy'
-copyright = '2008-2009, The Scipy community'
+copyright = '2008-2014, The Scipy community'
 
 # The default replacements for |version| and |release|, also used in various
 # other places throughout the built documents.
@@ -141,7 +141,7 @@ html_file_suffix = '.html'
 htmlhelp_basename = 'scipy'
 
 pngmath_use_preview = True
-pngmath_dvipng_args = ['-gamma 1.5', '-D 96', '-bg Transparent']
+pngmath_dvipng_args = ['-gamma', '1.5', '-D', '96', '-bg', 'Transparent']
 
 
 # -----------------------------------------------------------------------------
@@ -236,7 +236,7 @@ numpydoc_use_plots = True
 # Autosummary
 # -----------------------------------------------------------------------------
 
-if sphinx.__version__ >= "0.7": 
+if sphinx.__version__ >= "0.7":
     import glob
     autosummary_generate = glob.glob("*.rst")
 

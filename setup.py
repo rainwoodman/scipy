@@ -21,7 +21,10 @@ DOCLINES = __doc__.split("\n")
 import os
 import sys
 import subprocess
-import shutil
+
+
+if sys.version_info[:2] < (2, 6) or (3, 0) <= sys.version_info[0:2] < (3, 2):
+    raise RuntimeError("Python version 2.6, 2.7 or >= 3.2 required.")
 
 if sys.version_info[0] < 3:
     import __builtin__ as builtins
@@ -46,7 +49,7 @@ Operating System :: MacOS
 """
 
 MAJOR               = 0
-MINOR               = 13
+MINOR               = 15
 MICRO               = 0
 ISRELEASED          = False
 VERSION             = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
@@ -136,7 +139,7 @@ if not release:
 try:
     from sphinx.setup_command import BuildDoc
     HAVE_SPHINX = True
-except ImportError:
+except:
     HAVE_SPHINX = False
 
 if HAVE_SPHINX:
@@ -176,13 +179,23 @@ def configuration(parent_package='',top_path=None):
 
 def setup_package():
 
-    # Rewrite the version file everytime
+    # Rewrite the version file every time
     write_version_py()
 
     if HAVE_SPHINX:
         cmdclass = {'build_sphinx': ScipyBuildDoc}
     else:
         cmdclass = {}
+
+    # Figure out whether to add ``*_requires = ['numpy']``.
+    # We don't want to do that unconditionally, because we risk updating
+    # an installed numpy which fails too often.  Just if it's not installed, we
+    # may give it a try.  See gh-3379.
+    build_requires = []
+    try:
+        import numpy
+    except:
+        build_requires = ['numpy>=1.5.1']
 
     metadata = dict(
         name = 'scipy',
@@ -191,12 +204,14 @@ def setup_package():
         description = DOCLINES[0],
         long_description = "\n".join(DOCLINES[2:]),
         url = "http://www.scipy.org",
-        download_url = "http://sourceforge.net/project/showfiles.php?group_id=27747&package_id=19531",
+        download_url = "http://sourceforge.net/projects/scipy/files/scipy/",
         license = 'BSD',
         cmdclass=cmdclass,
         classifiers=[_f for _f in CLASSIFIERS.split('\n') if _f],
         platforms = ["Windows", "Linux", "Solaris", "Mac OS-X", "Unix"],
         test_suite='nose.collector',
+        setup_requires = build_requires,
+        install_requires = build_requires,
     )
 
     if len(sys.argv) >= 2 and ('--help' in sys.argv[1:] or
@@ -215,6 +230,10 @@ def setup_package():
         FULLVERSION, GIT_REVISION = get_version_info()
         metadata['version'] = FULLVERSION
     else:
+        if len(sys.argv) >= 2 and sys.argv[1] == 'bdist_wheel':
+            # bdist_wheel needs setuptools
+            import setuptools
+
         from numpy.distutils.core import setup
 
         cwd = os.path.abspath(os.path.dirname(__file__))
@@ -228,4 +247,3 @@ def setup_package():
 
 if __name__ == '__main__':
     setup_package()
-

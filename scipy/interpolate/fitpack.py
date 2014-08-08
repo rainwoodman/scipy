@@ -363,7 +363,7 @@ def splrep(x,y,w=None,xb=None,xe=None,k=3,task=0,s=None,t=None,
         the number of datapoints in x, y, and w. default : s=m-sqrt(2*m) if
         weights are supplied. s = 0.0 (interpolating) if no weights are
         supplied.
-    t : int
+    t : array_like
         The knots needed for task=-1. If given then task is automatically set
         to -1.
     full_output : bool
@@ -388,6 +388,13 @@ def splrep(x,y,w=None,xb=None,xe=None,k=3,task=0,s=None,t=None,
         error is raised.
     msg : str, optional
         A message corresponding to the integer flag, ier.
+
+    Notes
+    -----
+    See splev for evaluation of the spline and its derivatives.
+
+    The user is responsible for assuring that the values of *x* are unique.
+    Otherwise, *splrep* will not return sensible results.
 
     See Also
     --------
@@ -546,7 +553,7 @@ def splev(x, tck, der=0, ext=0):
     -------
     y : ndarray or list of ndarrays
         An array of values representing the spline function evaluated at
-        the points in ``x``.  If `tck` was returned from splrep, then this
+        the points in ``x``.  If `tck` was returned from `splprep`, then this
         is a list of arrays representing the curve in N-dimensional space.
 
     See Also
@@ -575,7 +582,7 @@ def splev(x, tck, der=0, ext=0):
     else:
         if not (0 <= der <= k):
             raise ValueError("0<=der=%d<=k=%d must hold" % (der,k))
-        if not ext in (0,1,2):
+        if ext not in (0,1,2):
             raise ValueError("ext not in (0, 1, 2)")
 
         x = asarray(x)
@@ -617,6 +624,11 @@ def splint(a,b,tck,full_output=0):
     wrk : ndarray
         An array containing the integrals of the normalized B-splines
         defined on the set of knots.
+
+    Notes
+    -----
+    splint silently assumes that the spline function is zero outside the data
+    interval (a, b).
 
     See Also
     --------
@@ -1045,7 +1057,7 @@ def dblint(xa,xb,ya,yb,tck):
         The value of the resulting integral.
     """
     tx,ty,c,kx,ky = tck
-    return dfitpack.dblint(tx,ty,c,kx,ky,xb,xe,yb,ye)
+    return dfitpack.dblint(tx,ty,c,kx,ky,xa,xb,ya,yb)
 
 
 def insert(x,tck,m=1,per=0):

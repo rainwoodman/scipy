@@ -82,7 +82,6 @@ cdef class GenericStream:
 
         if count != n:
             raise IOError('could not read bytes')
-            return -1
         return 0
 
     cdef object read_string(self, size_t n, void **pp, int copy=True):
@@ -107,9 +106,8 @@ cdef class ZlibInputStream(GenericStream):
     ----------
     stream : file-like
         Stream to read compressed data from.
-    max_length : int, optional
+    max_length : int
         Maximum number of bytes to read from the stream.
-        -1 if the length is unlimited.
 
     Notes
     -----
@@ -128,7 +126,7 @@ cdef class ZlibInputStream(GenericStream):
     cdef size_t _total_position
     cdef size_t _read_bytes
 
-    def __init__(self, fobj, ssize_t max_length=-1):
+    def __init__(self, fobj, ssize_t max_length):
         self.fobj = fobj
 
         self._max_length = max_length
@@ -146,9 +144,7 @@ cdef class ZlibInputStream(GenericStream):
         if self._buffer_position < self._buffer_size:
             return
 
-        read_size = BLOCK_SIZE
-        if self._max_length >= 0:
-            read_size = min(read_size, self._max_length - self._read_bytes)
+        read_size = min(BLOCK_SIZE, self._max_length - self._read_bytes)
 
         block = self.fobj.read(read_size)
         self._read_bytes += len(block)
@@ -163,7 +159,8 @@ cdef class ZlibInputStream(GenericStream):
     cdef int read_into(self, void *buf, size_t n) except -1:
         """Read n bytes from stream into pre-allocated buffer `buf`
         """
-        cdef char *dstp, *srcp
+        cdef char *dstp
+        cdef char *srcp
         cdef size_t read_size, count, size
 
         dstp = <char*>buf
@@ -199,6 +196,10 @@ cdef class ZlibInputStream(GenericStream):
     def read(self, n_bytes):
         cdef void *p
         return self.read_string(n_bytes, &p)
+
+    cpdef int all_data_read(self):
+        return (self._max_length == self._read_bytes) and \
+               (self._buffer_size == self._buffer_position)
 
     cpdef long int tell(self):
         return self._total_position
@@ -301,7 +302,6 @@ cdef class FileStream(GenericStream):
         ret = fseek(self.file, offset, whence)
         if ret:
             raise IOError('Failed seek')
-            return -1
         return ret
 
     cpdef long int tell(self):
@@ -316,7 +316,6 @@ cdef class FileStream(GenericStream):
         n_red = fread(buf, 1, n, self.file)
         if n_red != n:
             raise IOError('Could not read bytes')
-            return -1
         return 0
 
     cdef object read_string(self, size_t n, void **pp, int copy=True):

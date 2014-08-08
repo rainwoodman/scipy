@@ -36,20 +36,23 @@
 from __future__ import division, print_function, absolute_import
 
 import os.path
-from scipy.lib.six.moves import xrange
+from scipy.lib.six import xrange
+
+from nose.tools import assert_true
 
 import numpy as np
 from numpy.linalg import norm
-from numpy.testing import verbose, TestCase, run_module_suite, \
-        assert_raises, assert_array_equal, assert_equal, assert_almost_equal
+from numpy.testing import (verbose, TestCase, run_module_suite,
+        assert_raises, assert_array_equal, assert_equal, assert_almost_equal,
+        assert_allclose)
 
 from scipy.lib.six import u
 
-from scipy.spatial.distance import squareform, pdist, cdist, matching, \
-        jaccard, dice, sokalsneath, rogerstanimoto, russellrao, yule, \
-        num_obs_y, num_obs_dm, is_valid_dm, is_valid_y, minkowski, wminkowski, \
-        euclidean, sqeuclidean, cosine, correlation, mahalanobis, \
-        canberra, braycurtis, sokalmichener, _validate_vector
+from scipy.spatial.distance import (squareform, pdist, cdist, matching,
+        jaccard, dice, sokalsneath, rogerstanimoto, russellrao, yule,
+        num_obs_y, num_obs_dm, is_valid_dm, is_valid_y, minkowski, wminkowski,
+        euclidean, sqeuclidean, cosine, correlation, mahalanobis,
+        canberra, braycurtis, sokalmichener, _validate_vector)
 
 
 _filenames = ["iris.txt",
@@ -896,16 +899,16 @@ class TestPdist(TestCase):
                        1.5, 3.0,
                        2.5]
         dist = pdist(x, metric=wminkowski, w=[1.0, 1.0, 1.0])
-        assert_array_equal(dist, p2_expected)
+        assert_allclose(dist, p2_expected, rtol=1e-14)
 
         dist = pdist(x, metric=wminkowski, w=[0.5, 1.0, 2.0], p=1)
-        assert_array_equal(dist, p1_expected)
+        assert_allclose(dist, p1_expected, rtol=1e-14)
 
         dist = pdist(x, metric='wminkowski', w=[1.0, 1.0, 1.0])
-        assert_array_equal(dist, p2_expected)
+        assert_allclose(dist, p2_expected, rtol=1e-14)
 
         dist = pdist(x, metric='wminkowski', w=[0.5, 1.0, 2.0], p=1)
-        assert_array_equal(dist, p1_expected)
+        assert_allclose(dist, p1_expected, rtol=1e-14)
 
     ################### pdist: hamming
     def test_pdist_hamming_random(self):
@@ -1693,15 +1696,15 @@ class TestIsValidDM(TestCase):
             D[i, i] = 2.0
         self.assertTrue(is_valid_dm(D) == False)
 
-    def test_is_valid_dm_assymetric_E(self):
-        "Tests is_valid_dm(*) on an assymetric distance matrix. Exception expected."
+    def test_is_valid_dm_asymmetric_E(self):
+        "Tests is_valid_dm(*) on an asymmetric distance matrix. Exception expected."
         y = np.random.rand(10)
         D = squareform(y)
         D[1,3] = D[3,1] + 1
         self.assertRaises(ValueError, is_valid_dm_throw, (D))
 
-    def test_is_valid_dm_assymetric_F(self):
-        "Tests is_valid_dm(*) on an assymetric distance matrix. False expected."
+    def test_is_valid_dm_asymmetric_F(self):
+        "Tests is_valid_dm(*) on an asymmetric distance matrix. False expected."
         y = np.random.rand(10)
         D = squareform(y)
         D[1,3] = D[3,1] + 1
@@ -1864,6 +1867,37 @@ def test_euclideans():
     d1 = euclidean(x, y)
     d2 = sqeuclidean(x, y)
     assert_almost_equal(d1**2, d2, decimal=14)
+
+
+def test_sqeuclidean_dtypes():
+    """Assert that sqeuclidean returns the right types of values.
+
+    Integer types should be converted to floating for stability.
+    Floating point types should be the same as the input.
+    """
+    x = [1, 2, 3]
+    y = [4, 5, 6]
+
+    for dtype in [np.int8, np.int16, np.int32, np.int64]:
+        d = sqeuclidean(np.asarray(x, dtype=dtype), np.asarray(y, dtype=dtype))
+        assert_true(np.issubdtype(d.dtype, np.floating))
+
+    for dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
+        d1 = sqeuclidean([0], np.asarray([-1], dtype=dtype))
+        d2 = sqeuclidean(np.asarray([-1], dtype=dtype), [0])
+
+        assert_equal(d1, d2)
+        assert_equal(d1, np.float64(np.iinfo(dtype).max) ** 2)
+
+    dtypes = [np.float32, np.float64, np.complex64, np.complex128]
+    for dtype in ['float16', 'float128']:
+        # These aren't present in older numpy versions
+        if hasattr(np, dtype):
+            dtypes.append(getattr(np, dtype))
+
+    for dtype in dtypes:
+        d = sqeuclidean(np.asarray(x, dtype=dtype), np.asarray(y, dtype=dtype))
+        assert_equal(d.dtype, dtype)
 
 
 def test_sokalmichener():

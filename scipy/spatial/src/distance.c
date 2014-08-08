@@ -38,19 +38,23 @@
 
 #include <math.h>
 #include <stdlib.h>
-#include "common.h"
 #include "distance.h"
 
-static NPY_INLINE double euclidean_distance(const double *u, const double *v, int n) {
+static NPY_INLINE double sqeuclidean_distance(const double *u, const double *v, int n) {
   int i = 0;
   double s = 0.0, d;
   for (i = 0; i < n; i++) {
     d = u[i] - v[i];
     s = s + d * d;
   }
-  return sqrt(s);
+  return s;
 }
 
+static NPY_INLINE double euclidean_distance(const double *u, const double *v, int n) {
+    return sqrt(sqeuclidean_distance(u, v, n));
+}
+
+#if 0   /* XXX unused */
 static NPY_INLINE double ess_distance(const double *u, const double *v, int n) {
   int i = 0;
   double s = 0.0, d;
@@ -60,6 +64,7 @@ static NPY_INLINE double ess_distance(const double *u, const double *v, int n) {
   }
   return s;
 }
+#endif
 
 static NPY_INLINE double chebyshev_distance(const double *u, const double *v, int n) {
   int i = 0;
@@ -335,6 +340,19 @@ void pdist_euclidean(const double *X, double *dm, int m, int n) {
       u = X + (n * i);
       v = X + (n * j);
       *it = euclidean_distance(u, v, n);
+    }
+  }
+}
+
+void pdist_sqeuclidean(const double *X, double *dm, int m, int n) {
+  int i, j;
+  const double *u, *v;
+  double *it = dm;
+  for (i = 0; i < m; i++) {
+    for (j = i + 1; j < m; j++, it++) {
+      u = X + (n * i);
+      v = X + (n * j);
+      *it = sqeuclidean_distance(u, v, n);
     }
   }
 }
@@ -659,6 +677,20 @@ void cdist_euclidean(const double *XA,
       u = XA + (n * i);
       v = XB + (n * j);
       *it = euclidean_distance(u, v, n);
+    }
+  }
+}
+
+void cdist_sqeuclidean(const double *XA,
+		     const double *XB, double *dm, int mA, int mB, int n) {
+  int i, j;
+  const double *u, *v;
+  double *it = dm;
+  for (i = 0; i < mA; i++) {
+    for (j = 0; j < mB; j++, it++) {
+      u = XA + (n * i);
+      v = XB + (n * j);
+      *it = sqeuclidean_distance(u, v, n);
     }
   }
 }

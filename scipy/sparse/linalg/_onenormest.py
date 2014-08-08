@@ -203,7 +203,7 @@ def _algorithm_2_2(A, AT, t):
     It uses the 'ind' array in a way that is similar to
     its usage in algorithm 2.4.  This algorithm 2.2 may be easier to test,
     so it gives a chance of uncovering bugs related to indexing
-    which could have propagated less noticably to algorithm 2.4.
+    which could have propagated less noticeably to algorithm 2.4.
 
     """
     A_linear_operator = aslinearoperator(A)
@@ -348,6 +348,7 @@ def _onenormest_core(A, AT, t, itmax):
     est_old = 0
     S = np.zeros((n, t), dtype=float)
     k = 1
+    ind = None
     while True:
         Y = np.asarray(A_linear_operator.matmat(X))
         nmults += 1

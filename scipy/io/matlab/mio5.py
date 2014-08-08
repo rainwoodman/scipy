@@ -90,19 +90,19 @@ from scipy.lib.six import string_types
 
 from .byteordercodes import native_code, swapped_code
 
-from .miobase import MatFileReader, docfiller, matdims, \
-     read_dtype, arr_to_chars, arr_dtype_number, \
-     MatWriteError, MatReadError, MatReadWarning
+from .miobase import (MatFileReader, docfiller, matdims, read_dtype,
+                      arr_to_chars, arr_dtype_number, MatWriteError,
+                      MatReadError, MatReadWarning)
 
 # Reader object for matlab 5 format variables
 from .mio5_utils import VarReader5
 
 # Constants and helper objects
-from .mio5_params import MatlabObject, MatlabFunction, \
-        MDTYPES, NP_TO_MTYPES, NP_TO_MXTYPES, \
-        miCOMPRESSED, miMATRIX, miINT8, miUTF8, miUINT32, \
-        mxCELL_CLASS, mxSTRUCT_CLASS, mxOBJECT_CLASS, mxCHAR_CLASS, \
-        mxSPARSE_CLASS, mxDOUBLE_CLASS, mclass_info, mclass_dtypes_template
+from .mio5_params import (MatlabObject, MatlabFunction, MDTYPES, NP_TO_MTYPES,
+                          NP_TO_MXTYPES, miCOMPRESSED, miMATRIX, miINT8, miUTF8,
+                          miUINT32, mxCELL_CLASS, mxSTRUCT_CLASS,
+                          mxOBJECT_CLASS, mxCHAR_CLASS, mxSPARSE_CLASS,
+                          mxDOUBLE_CLASS, mclass_info)
 
 from .streams import ZlibInputStream
 
@@ -136,6 +136,7 @@ class MatFile5Reader(MatFileReader):
                  chars_as_strings=True,
                  matlab_compatible=False,
                  struct_as_record=True,
+                 verify_compressed_data_integrity=True,
                  uint16_codec=None
                  ):
         '''Initializer for matlab 5 file format reader
@@ -154,7 +155,8 @@ class MatFile5Reader(MatFileReader):
             squeeze_me,
             chars_as_strings,
             matlab_compatible,
-            struct_as_record
+            struct_as_record,
+            verify_compressed_data_integrity
             )
         # Set uint16 codec
         if not uint16_codec:
@@ -220,12 +222,14 @@ class MatFile5Reader(MatFileReader):
             # Make new stream from compressed data
             stream = ZlibInputStream(self.mat_stream, byte_count)
             self._matrix_reader.set_stream(stream)
+            check_stream_limit = self.verify_compressed_data_integrity
             mdtype, byte_count = self._matrix_reader.read_full_tag()
         else:
+            check_stream_limit = False
             self._matrix_reader.set_stream(self.mat_stream)
         if not mdtype == miMATRIX:
             raise TypeError('Expecting miMATRIX type here, got %d' % mdtype)
-        header = self._matrix_reader.read_header()
+        header = self._matrix_reader.read_header(check_stream_limit)
         return header, next_pos
 
     def read_var_array(self, header, process=True):
@@ -471,7 +475,7 @@ def to_writeable(source):
         values = []
         for field, value in source.items():
             if (isinstance(field, string_types) and
-                not field[0] in '_0123456789'):
+                    field[0] not in '_0123456789'):
                 dtype.append((field,object))
                 values.append(value)
         if dtype:
@@ -593,7 +597,11 @@ class VarWriter5(object):
     def update_matrix_tag(self, start_pos):
         curr_pos = self.file_stream.tell()
         self.file_stream.seek(start_pos)
-        self.mat_tag['byte_count'] = curr_pos - start_pos - 8
+        byte_count = curr_pos - start_pos - 8
+        if byte_count >= 2**32:
+            raise MatWriteError("Matrix too large to save with Matlab "
+                                "5 format")
+        self.mat_tag['byte_count'] = byte_count
         self.write_bytes(self.mat_tag)
         self.file_stream.seek(curr_pos)
 
@@ -761,9 +769,8 @@ class VarWriter5(object):
         length = max([len(fieldname) for fieldname in fieldnames])+1
         max_length = (self.long_field_names and 64) or 32
         if length > max_length:
-            raise ValueError(
-                "Field names are restricted to %d characters"
-                 % (max_length-1))
+            raise ValueError("Field names are restricted to %d characters" %
+                             (max_length-1))
         self.write_element(np.array([length], dtype='i4'))
         self.write_element(
             np.array(fieldnames, dtype='S%d' % (length)),
@@ -793,7 +800,7 @@ class MatFile5Writer(object):
                  unicode_strings=False,
                  global_vars=None,
                  long_field_names=False,
-                 oned_as=None):
+                 oned_as='row'):
         ''' Initialize writer for matlab 5 format files
 
         Parameters
@@ -813,12 +820,6 @@ class MatFile5Writer(object):
         else:
             self.global_vars = []
         self.long_field_names = long_field_names
-        # deal with deprecations
-        if oned_as is None:
-            warnings.warn("Using oned_as default value ('column')" +
-                          " This will change to 'row' in future versions",
-                          FutureWarning, stacklevel=2)
-            oned_as = 'column'
         self.oned_as = oned_as
         self._matrix_writer = None
 

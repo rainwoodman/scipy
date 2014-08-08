@@ -61,7 +61,7 @@ xtype : {'f','d','F','D'}
     will compute A.matvec(x0) to get a typecode.   To save the extra
     computation when A does not have a typecode attribute use xtype=0
     for the same type as b or use xtype='f','d','F',or 'D'.
-    This parameter has been superceeded by LinearOperator.
+    This parameter has been superseded by LinearOperator.
 
 """
 
@@ -195,8 +195,6 @@ def bicgstab(A, b, x0=None, tol=1e-5, maxiter=None, xtype=None, M=None, callback
             work[slice2] *= sclr2
             work[slice2] += sclr1*matvec(work[slice1])
         elif (ijob == 2):
-            if psolve is None:
-                psolve = get_psolve(A)
             work[slice1] = psolve(work[slice2])
         elif (ijob == 3):
             work[slice2] *= sclr2
@@ -368,8 +366,9 @@ def gmres(A, b, x0=None, tol=1e-5, restart=None, maxiter=None, xtype=None, M=Non
         iteration cost, but may be necessary for convergence.
         Default is 20.
     maxiter : int, optional
-        Maximum number of iterations.  Iteration will stop after maxiter
-        steps even if the specified tolerance has not been achieved.
+        Maximum number of iterations (restart cycles).  Iteration will stop
+        after maxiter steps even if the specified tolerance has not been
+        achieved.
     xtype : {'f','d','F','D'}
         This parameter is DEPRECATED --- avoid using it.
 
@@ -378,7 +377,7 @@ def gmres(A, b, x0=None, tol=1e-5, restart=None, maxiter=None, xtype=None, M=Non
         will compute A.matvec(x0) to get a typecode.   To save the extra
         computation when A does not have a typecode attribute use xtype=0
         for the same type as b or use xtype='f','d','F',or 'D'.
-        This parameter has been superceeded by LinearOperator.
+        This parameter has been superseded by LinearOperator.
     M : {sparse matrix, dense matrix, LinearOperator}
         Inverse of the preconditioner of A.  M should approximate the
         inverse of A and be easy to solve for (see Notes).  Effective
@@ -546,7 +545,7 @@ def qmr(A, b, x0=None, tol=1e-5, maxiter=None, xtype=None, M1=None, M2=None, cal
         will compute A.matvec(x0) to get a typecode.   To save the extra
         computation when A does not have a typecode attribute use xtype=0
         for the same type as b or use xtype='f','d','F',or 'D'.
-        This parameter has been superceeded by LinearOperator.
+        This parameter has been superseded by LinearOperator.
 
     See Also
     --------

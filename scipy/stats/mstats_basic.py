@@ -18,8 +18,6 @@ __all__ = ['argstoarray',
            'chisquare','count_tied_groups',
            'describe',
            'f_oneway','f_value_wilks_lambda','find_repeats','friedmanchisquare',
-           'gmean',
-           'hmean',
            'kendalltau','kendalltau_seasonal','kruskal','kruskalwallis',
            'ks_twosamp','ks_2samp','kurtosis','kurtosistest',
            'linregress',
@@ -42,48 +40,48 @@ __all__ = ['argstoarray',
 import numpy as np
 from numpy import ndarray
 import numpy.ma as ma
-from numpy.ma import MaskedArray, masked, nomask
+from numpy.ma import masked, nomask
 
 from scipy.lib.six import iteritems
 
 import itertools
 import warnings
 
-
-# import scipy.stats as stats
 from . import stats
+from . import distributions
 import scipy.special as special
-import scipy.misc as misc
-# import scipy.stats.futil as futil
 from . import futil
 
+
 genmissingvaldoc = """
-Notes
------
+
+    Notes
+    -----
     Missing values are considered pair-wise: if a value is missing in x,
     the corresponding value in y is masked.
-"""
+    """
 #------------------------------------------------------------------------------
 
 
 def _chk_asarray(a, axis):
+    # Always returns a masked array, raveled for axis=None
+    a = ma.asanyarray(a)
     if axis is None:
         a = ma.ravel(a)
         outaxis = 0
     else:
-        a = ma.asanyarray(a)
         outaxis = axis
     return a, outaxis
 
 
 def _chk2_asarray(a, b, axis):
+    a = ma.asanyarray(a)
+    b = ma.asanyarray(b)
     if axis is None:
         a = ma.ravel(a)
         b = ma.ravel(b)
         outaxis = 0
     else:
-        a = ma.asanyarray(a)
-        b = ma.asanyarray(b)
         outaxis = axis
     return a, b, outaxis
 
@@ -144,13 +142,13 @@ def find_repeats(arr):
     """Find repeats in arr and return a tuple (repeats, repeat_count).
     Masked values are discarded.
 
-Parameters
-----------
+    Parameters
+    ----------
     arr : sequence
         Input array. The array is flattened if it is not 1D.
 
-Returns
--------
+    Returns
+    -------
     repeats : ndarray
         Array of repeated values.
     counts : ndarray
@@ -222,17 +220,17 @@ def rankdata(data, axis=None, use_missing=False):
 
     Parameters
     ----------
-        data : sequence
-            Input data. The data is transformed to a masked array
-        axis : {None,int}, optional
-            Axis along which to perform the ranking.
-            If None, the array is first flattened. An exception is raised if
-            the axis is specified for arrays with a dimension larger than 2
-        use_missing : {boolean}, optional
-            Whether the masked values have a rank of 0 (False) or equal to the
-            average rank of the unmasked values (True).
+    data : sequence
+        Input data. The data is transformed to a masked array
+    axis : {None,int}, optional
+        Axis along which to perform the ranking.
+        If None, the array is first flattened. An exception is raised if
+        the axis is specified for arrays with a dimension larger than 2
+    use_missing : {boolean}, optional
+        Whether the masked values have a rank of 0 (False) or equal to the
+        average rank of the unmasked values (True).
+
     """
-    #
     def _rank1d(data, use_missing=False):
         n = data.count()
         rk = np.empty(data.size, dtype=float)
@@ -264,32 +262,20 @@ def rankdata(data, axis=None, use_missing=False):
 #---- --- Central tendency ---
 #####--------------------------------------------------------------------------
 
-def gmean(a, axis=0):
-    a, axis = _chk_asarray(a, axis)
-    log_a = ma.log(a)
-    return ma.exp(log_a.mean(axis=axis))
-gmean.__doc__ = stats.gmean.__doc__
-
-
-def hmean(a, axis=0):
-    a, axis = _chk_asarray(a, axis)
-    if isinstance(a, MaskedArray):
-        size = a.count(axis)
-    else:
-        size = a.shape[axis]
-    return size / (1.0/a).sum(axis)
-hmean.__doc__ = stats.hmean.__doc__
-
-
 def mode(a, axis=0):
+    a, axis = _chk_asarray(a, axis)
+
     def _mode1D(a):
         (rep,cnt) = find_repeats(a)
         if not cnt.ndim:
             return (0, 0)
         elif cnt.size:
             return (rep[cnt.argmax()], cnt.max())
-        return (a[0], 1)
-    #
+        else:
+            not_masked_indices = ma.flatnotmasked_edges(a)
+            first_not_masked_index = not_masked_indices[0]
+            return (a[first_not_masked_index], 1)
+
     if axis is None:
         output = _mode1D(ma.ravel(a))
         output = (ma.array(output[0]), ma.array(output[1]))
@@ -328,7 +314,8 @@ def msign(x):
 
 
 def pearsonr(x,y):
-    """Calculates a Pearson correlation coefficient and the p-value for testing
+    """
+    Calculates a Pearson correlation coefficient and the p-value for testing
     non-correlation.
 
     The Pearson correlation coefficient measures the linear relationship
@@ -336,8 +323,8 @@ def pearsonr(x,y):
     that each dataset be normally distributed. Like other correlation
     coefficients, this one varies between -1 and +1 with 0 implying no
     correlation. Correlations of -1 or +1 imply an exact linear
-    relationship. Positive correlations imply that as x increases, so does
-    y. Negative correlations imply that as x increases, y decreases.
+    relationship. Positive correlations imply that as `x` increases, so does
+    `y`. Negative correlations imply that as `x` increases, `y` decreases.
 
     The p-value roughly indicates the probability of an uncorrelated system
     producing datasets that have a Pearson correlation at least as extreme
@@ -346,17 +333,20 @@ def pearsonr(x,y):
 
     Parameters
     ----------
-    x : 1D array
-    y : 1D array the same length as x
+    x : 1-D array_like
+        Input
+    y : 1-D array_like
+        Input
 
     Returns
     -------
-    (Pearson's correlation coefficient,
-     2-tailed p-value)
+    pearsonr : float
+        Pearson's correlation coefficient, 2-tailed p-value.
 
     References
     ----------
     http://www.statsoft.com/textbook/glosp.html#Pearson%20Correlation
+
     """
     (x, y, n) = _chk_size(x, y)
     (x, y) = (x.ravel(), y.ravel())
@@ -388,7 +378,8 @@ def pearsonr(x,y):
 
 
 def spearmanr(x, y, use_ties=True):
-    """Calculates a Spearman rank-order correlation coefficient and the p-value
+    """
+    Calculates a Spearman rank-order correlation coefficient and the p-value
     to test for non-correlation.
 
     The Spearman correlation is a nonparametric measure of the linear
@@ -397,33 +388,35 @@ def spearmanr(x, y, use_ties=True):
     distributed. Like other correlation coefficients, this one varies
     between -1 and +1 with 0 implying no correlation. Correlations of -1 or
     +1 imply an exact linear relationship. Positive correlations imply that
-    as x increases, so does y. Negative correlations imply that as x
-    increases, y decreases.
+    as `x` increases, so does `y`. Negative correlations imply that as `x`
+    increases, `y` decreases.
 
-    Missing values are discarded pair-wise: if a value is missing in x, the
-    corresponding value in y is masked.
+    Missing values are discarded pair-wise: if a value is missing in `x`, the
+    corresponding value in `y` is masked.
 
     The p-value roughly indicates the probability of an uncorrelated system
     producing datasets that have a Spearman correlation at least as extreme
     as the one computed from these datasets. The p-values are not entirely
     reliable but are probably reasonable for datasets larger than 500 or so.
 
-Parameters
-----------
-    x : 1D array
-    y : 1D array the same length as x
-        The lengths of both arrays must be > 2.
-    use_ties : {True, False}, optional
+    Parameters
+    ----------
+    x : array_like
+        The length of `x` must be > 2.
+    y : array_like
+        The length of `y` must be > 2.
+    use_ties : bool, optional
         Whether the correction for ties should be computed.
 
-Returns
--------
-    (Spearman correlation coefficient,
-     2-tailed p-value)
+    Returns
+    -------
+    spearmanr : float
+        Spearman correlation coefficient, 2-tailed p-value.
 
     References
     ----------
     [CRCProbStat2000] section 14.7
+
     """
     (x, y, n) = _chk_size(x, y)
     (x, y) = (x.ravel(), y.ravel())
@@ -541,13 +534,14 @@ def kendalltau(x, y, use_ties=True, use_missing=False):
 
 
 def kendalltau_seasonal(x):
-    """Computes a multivariate extension Kendall's rank correlation tau, designed
-    for seasonal data.
+    """
+    Computes a multivariate Kendall's rank correlation tau, for seasonal data.
 
-Parameters
-----------
-    x: 2D array
+    Parameters
+    ----------
+    x : 2-D ndarray
         Array of seasonal data, with seasons in columns.
+
     """
     x = ma.array(x, subok=True, copy=False, ndmin=2)
     (n,m) = x.shape
@@ -635,104 +629,63 @@ if stats.pointbiserialr.__doc__:
 
 
 def linregress(*args):
-    if len(args) == 1:  # more than 1D array?
+    """
+    Linear regression calculation
+
+    Note that the non-masked version is used, and that this docstring is
+    replaced by the non-masked docstring + some info on missing data.
+
+    """
+    if len(args) == 1:
+        # Input is a single 2-D array containing x and y
         args = ma.array(args[0], copy=True)
         if len(args) == 2:
             x = args[0]
             y = args[1]
         else:
-            x = args[:,0]
-            y = args[:,1]
+            x = args[:, 0]
+            y = args[:, 1]
     else:
+        # Input is two 1-D arrays
         x = ma.array(args[0]).flatten()
         y = ma.array(args[1]).flatten()
-    m = ma.mask_or(ma.getmask(x), ma.getmask(y))
+
+    m = ma.mask_or(ma.getmask(x), ma.getmask(y), shrink=False)
     if m is not nomask:
-        x = ma.array(x,mask=m)
-        y = ma.array(y,mask=m)
-    n = len(x)
-    (xmean, ymean) = (x.mean(), y.mean())
-    (xm, ym) = (x-xmean, y-ymean)
-    (Sxx, Syy) = (ma.add.reduce(xm*xm), ma.add.reduce(ym*ym))
-    Sxy = ma.add.reduce(xm*ym)
-    r_den = ma.sqrt(Sxx*Syy)
-    if r_den == 0.0:
-        r = 0.0
+        x = ma.array(x, mask=m)
+        y = ma.array(y, mask=m)
+        if np.any(~m):
+            slope, intercept, r, prob, sterrest = stats.linregress(x.data[~m],
+                                                                   y.data[~m])
+        else:
+            # All data is masked
+            return None, None, None, None, None
     else:
-        r = Sxy / r_den
-        if (r > 1.0):
-            r = 1.0  # from numerical error
-    # z = 0.5*log((1.0+r+TINY)/(1.0-r+TINY))
-    df = n-2
-    t = r * ma.sqrt(df/(1.0-r*r))
-    prob = betai(0.5*df,0.5,df/(df+t*t))
-    slope = Sxy / Sxx
-    intercept = ymean - slope*xmean
-    sterrest = ma.sqrt(1.-r*r) * y.std()
+        slope, intercept, r, prob, sterrest = stats.linregress(x.data, y.data)
+
     return slope, intercept, r, prob, sterrest
 
 if stats.linregress.__doc__:
     linregress.__doc__ = stats.linregress.__doc__ + genmissingvaldoc
 
 
-def theilslopes(y, x=None, alpha=0.05):
-    """Computes the Theil slope over the dataset (x,y), as the median of all slopes
-    between paired values.
-
-    Parameters
-    ----------
-        y : sequence
-            Dependent variable.
-        x : {None, sequence}, optional
-            Independent variable. If None, use arange(len(y)) instead.
-        alpha : float
-            Confidence degree.
-
-    Returns
-    -------
-        medslope : float
-            Theil slope
-        medintercept : float
-            Intercept of the Theil line, as median(y)-medslope*median(x)
-        lo_slope : float
-            Lower bound of the confidence interval on medslope
-        up_slope : float
-            Upper bound of the confidence interval on medslope
-
-    """
+def theilslopes(y, x=None, alpha=0.95):
     y = ma.asarray(y).flatten()
-    y[-1] = masked
-    n = len(y)
     if x is None:
         x = ma.arange(len(y), dtype=float)
     else:
         x = ma.asarray(x).flatten()
-        if len(x) != n:
-            raise ValueError("Incompatible lengths ! (%s<>%s)" % (n,len(x)))
+        if len(x) != len(y):
+            raise ValueError("Incompatible lengths ! (%s<>%s)" % (len(y),len(x)))
+
     m = ma.mask_or(ma.getmask(x), ma.getmask(y))
     y._mask = x._mask = m
-    ny = y.count()
-    #
-    slopes = ma.hstack([(y[i+1:]-y[i])/(x[i+1:]-x[i]) for i in range(n-1)])
-    slopes.sort()
-    medslope = ma.median(slopes)
-    medinter = ma.median(y) - medslope*ma.median(x)
-    #
-    if alpha > 0.5:
-        alpha = 1.-alpha
-    z = stats.distributions.norm.ppf(alpha/2.)
-    #
-    (xties, yties) = (count_tied_groups(x), count_tied_groups(y))
-    nt = ny*(ny-1)/2.
-    sigsq = (ny*(ny-1)*(2*ny+5)/18.)
-    sigsq -= np.sum(v*k*(k-1)*(2*k+5) for (k,v) in iteritems(xties))
-    sigsq -= np.sum(v*k*(k-1)*(2*k+5) for (k,v) in iteritems(yties))
-    sigma = np.sqrt(sigsq)
-
-    Ru = min(np.round((nt - z*sigma)/2. + 1), len(slopes)-1)
-    Rl = max(np.round((nt + z*sigma)/2.), 0)
-    delta = slopes[[Rl,Ru]]
-    return medslope, medinter, delta[0], delta[1]
+    # Disregard any masked elements of x or y
+    y = y.compressed()
+    x = x.compressed().astype(float)
+    # We now have unmasked arrays so can use `stats.theilslopes`
+    return stats.theilslopes(y, x, alpha=alpha)
+theilslopes.__doc__ = stats.theilslopes.__doc__
 
 
 def sen_seasonal_slopes(x):
@@ -750,39 +703,48 @@ def sen_seasonal_slopes(x):
 #---- --- Inferential statistics ---
 #####--------------------------------------------------------------------------
 
-def ttest_onesamp(a, popmean):
-    a = ma.asarray(a)
-    x = a.mean(axis=None)
-    v = a.var(axis=None,ddof=1)
-    n = a.count(axis=None)
-    df = n-1
-    svar = ((n-1)*v) / float(df)
-    t = (x-popmean)/ma.sqrt(svar*(1.0/n))
-    prob = betai(0.5*df,0.5,df/(df+t*t))
-    return t,prob
-ttest_onesamp.__doc__ = stats.ttest_1samp.__doc__
-ttest_1samp = ttest_onesamp
+def ttest_1samp(a, popmean, axis=0):
+    a, axis = _chk_asarray(a, axis)
+    if a.size == 0:
+        return (np.nan, np.nan)
+
+    x = a.mean(axis=axis)
+    v = a.var(axis=axis, ddof=1)
+    n = a.count(axis=axis)
+    df = n - 1.
+    svar = ((n - 1) * v) / df
+    t = (x - popmean) / ma.sqrt(svar / n)
+    prob = betai(0.5 * df, 0.5, df / (df + t*t))
+    return t, prob
+ttest_1samp.__doc__ = stats.ttest_1samp.__doc__
+ttest_onesamp = ttest_1samp
 
 
 def ttest_ind(a, b, axis=0):
     a, b, axis = _chk2_asarray(a, b, axis)
+    if a.size == 0 or b.size == 0:
+        return (np.nan, np.nan)
+
     (x1, x2) = (a.mean(axis), b.mean(axis))
     (v1, v2) = (a.var(axis=axis, ddof=1), b.var(axis=axis, ddof=1))
     (n1, n2) = (a.count(axis), b.count(axis))
-    df = n1+n2-2
-    svar = ((n1-1)*v1+(n2-1)*v2) / float(df)
-    svar == 0
+    df = n1 + n2 - 2.
+    svar = ((n1-1)*v1+(n2-1)*v2) / df
     t = (x1-x2)/ma.sqrt(svar*(1.0/n1 + 1.0/n2))  # N-D COMPUTATION HERE!!!!!!
     t = ma.filled(t, 1)           # replace NaN t-values with 1.0
-    probs = betai(0.5*df,0.5,float(df)/(df+t*t)).reshape(t.shape)
+    probs = betai(0.5 * df, 0.5, df/(df + t*t)).reshape(t.shape)
     return t, probs.squeeze()
 ttest_ind.__doc__ = stats.ttest_ind.__doc__
 
 
-def ttest_rel(a,b,axis=None):
+def ttest_rel(a, b, axis=0):
     a, b, axis = _chk2_asarray(a, b, axis)
     if len(a) != len(b):
         raise ValueError('unequal length arrays')
+
+    if a.size == 0 or b.size == 0:
+        return (np.nan, np.nan)
+
     (x1, x2) = (a.mean(axis), b.mean(axis))
     (v1, v2) = (a.var(axis=axis, ddof=1), b.var(axis=axis, ddof=1))
     n = a.count(axis)
@@ -797,159 +759,11 @@ def ttest_rel(a,b,axis=None):
 ttest_rel.__doc__ = stats.ttest_rel.__doc__
 
 
-def chisquare(f_obs, f_exp=None, ddof=0, axis=0):
-    """
-    Calculates a one-way chi square test.
-
-    The chi square test tests the null hypothesis that the categorical data
-    has the given frequencies.
-
-    Parameters
-    ----------
-    f_obs : array
-        Observed frequencies in each category.
-    f_exp : array, optional
-        Expected frequencies in each category.  By default the categories are
-        assumed to be equally likely.
-    ddof : int, optional
-        "Delta degrees of freedom": adjustment to the degrees of freedom
-        for the p-value.  The p-value is computed using a chi-squared
-        distribution with ``k - 1 - ddof`` degrees of freedom, where `k`
-        is the number of observed frequencies.  The default value of `ddof`
-        is 0.
-    axis : int or None, optional
-        The axis of the broadcast result of `f_obs` and `f_exp` along which to
-        apply the test.  If axis is None, all values in `f_obs` are treated
-        as a single data set.  Default is 0.
-
-    Returns
-    -------
-    chisq : float or np.ma.masked_array
-        The chisquare test statistic.  The value is a float if `axis` is
-        None or `f_obs` and `f_exp` are 1-D.
-    p : float or np.ma.masked_array
-        The p-value of the test.  The value is a float if `ddof` and the
-        return value `chisq` are scalars.
-
-    Notes
-    -----
-    This test is invalid when the observed or expected frequencies in each
-    category are too small.  A typical rule is that all of the observed
-    and expected frequencies should be at least 5.
-    The default degrees of freedom, k-1, are for the case when no parameters
-    of the distribution are estimated. If p parameters are estimated by
-    efficient maximum likelihood then the correct degrees of freedom are
-    k-1-p. If the parameters are estimated in a different way, then the
-    dof can be between k-1-p and k-1. However, it is also possible that
-    the asymptotic distribution is not a chisquare, in which case this
-    test is not appropriate.
-
-    References
-    ----------
-    .. [1] Lowry, Richard.  "Concepts and Applications of Inferential
-           Statistics". Chapter 8. http://faculty.vassar.edu/lowry/ch8pt1.html
-
-    Examples
-    --------
-    When just `f_obs` is given, it is assumed that the expected frequencies
-    are uniform and given by the mean of the observed frequencies.
-
-    >>> chisquare([16, 18, 16, 14, 12, 12])
-    (2.0, 0.84914503608460956)
-
-    With `f_exp` the expected frequencies can be given.
-
-    >>> chisquare([16, 18, 16, 14, 12, 12], f_exp=[16, 16, 16, 16, 16, 8])
-    (3.5, 0.62338762774958223)
-
-    When `f_obs` is 2-D, by default the test is applied to each column.
-
-    >>> obs = np.array([[16, 18, 16, 14, 12, 12], [32, 24, 16, 28, 20, 24]]).T
-    >>> obs.shape
-    (6, 2)
-    >>> chisquare(obs)
-    (masked_array(data = [2.0 6.666666666666667],
-                 mask = [False False],
-           fill_value = 1e+20)
-    ,
-     masked_array(data = [ 0.84914504  0.24663415],
-                 mask = False,
-           fill_value = 1e+20)
-    )
-
-    By setting ``axis=None``, the test is applied to all data in the array,
-    which is equivalent to applying the test to the flattened array.
-
-    >>> chisquare(obs, axis=None)
-    (23.31034482758621, 0.015975692534127565)
-    >>> chisquare(obs.ravel())
-    (23.31034482758621, 0.015975692534127565)
-
-    `ddof` is the change to make to the default degrees of freedom.
-
-    >>> chisquare([16, 18, 16, 14, 12, 12], ddof=1)
-    (2.0, 0.73575888234288467)
-
-    The calculation of the p-values is done by broadcasting the
-    chi-squared statistic with `ddof`.
-
-    >>> chisquare([16, 18, 16, 14, 12, 12], ddof=[0,1,2])
-    (2.0, array([ 0.84914504,  0.73575888,  0.5724067 ]))
-
-    `f_obs` and `f_exp` are also broadcast.  In the following, `f_obs` has
-    shape (6,) and `f_exp` has shape (2, 6), so the result of broadcasting
-    `f_obs` and `f_exp` has shape (2, 6).  To compute the desired chi-squared
-    statistics, we use ``axis=1``:
-
-    >>> chisquare([16, 18, 16, 14, 12, 12],
-    ...           f_exp=[[16, 16, 16, 16, 16, 8], [8, 20, 20, 16, 12, 12]],
-    ...           axis=1)
-    (masked_array(data = [3.5 9.25],
-                 mask = [False False],
-           fill_value = 1e+20)
-    ,
-     masked_array(data = [ 0.62338763  0.09949846],
-                 mask = False,
-           fill_value = 1e+20)
-    )
-
-    """
-    f_obs = ma.asarray(f_obs)
-
-    if f_exp is not None:
-        f_exp = ma.asanyarray(f_exp)
-    else:
-        # Compute the equivalent of
-        #   f_exp = f_obs.mean(axis=axis, keepdims=True)
-        # Older versions of numpy do not have the 'keepdims' argument, so
-        # we have to do a little work to achieve the same result.
-        # Ignore 'invalid' errors so the edge case of data sets with length 0
-        # is handled without spurious warnings.
-        with np.errstate(invalid='ignore'):
-            f_exp = np.atleast_1d(f_obs.mean(axis=axis))
-        if axis is not None:
-            reduced_shape = list(f_obs.shape)
-            reduced_shape[axis] = 1
-            f_exp.shape = reduced_shape
-
-    # `w` is the array of terms that are summed along `axis` to create
-    # the chi-squared statistic.
-    w = (f_obs - f_exp)**2 / f_exp
-    chisq = ma.add.reduce(w, axis=axis)
-
-    # Compute the corresponding p values.
-    # Masked elements are ignored, so the data sets may have different
-    # lengths.  Use the `count` method to get the number of elements in
-    # each data set.
-    num_obs = w.count(axis=axis)
-    if isinstance(num_obs, np.ndarray) and num_obs.ndim == 0:
-        # In some cases, the `count` method returns a scalar array (e.g.
-        # np.array(3)), but we want a plain integer.
-        num_obs = int(num_obs)
-    ddof = np.asanyarray(ddof)
-    p = stats.chisqprob(chisq, num_obs - 1 - ddof)
-
-    return chisq, p
+# stats.chisquare works with masked arrays, so we don't need to
+# implement it here.
+# For backwards compatibilty, stats.chisquare is included in
+# the stats.mstats namespace.
+chisquare = stats.chisquare
 
 
 def mannwhitneyu(x,y, use_continuity=True):
@@ -1021,20 +835,6 @@ kruskal = kruskalwallis
 kruskalwallis.__doc__ = stats.kruskal.__doc__
 
 
-_kolmog2 = special.kolmogorov
-
-
-def _kolmog1(x,n):
-    if x <= 0:
-        return 0
-    if x >= 1:
-        return 1
-    j = np.arange(np.floor(n*(1-x))+1)
-    return 1 - x * np.sum(np.exp(np.log(misc.comb(n,j))
-                                       + (n-j) * np.log(1-x-j/float(n))
-                                       + (j-1) * np.log(x+j/float(n))))
-
-
 def ks_twosamp(data1, data2, alternative="two-sided"):
     """
     Computes the Kolmogorov-Smirnov test on two samples.
@@ -1071,7 +871,7 @@ def ks_twosamp(data1, data2, alternative="two-sided"):
     alternative = str(alternative).lower()[0]
     if alternative == 't':
         d = ma.abs(csum).max()
-        prob = _kolmog2(np.sqrt(n)*d)
+        prob = special.kolmogorov(np.sqrt(n)*d)
     elif alternative == 'l':
         d = -csum.min()
         prob = np.exp(-2*n*d**2)
@@ -1102,11 +902,12 @@ def ks_twosamp_old(data1, data2):
 #####--------------------------------------------------------------------------
 
 def threshold(a, threshmin=None, threshmax=None, newval=0):
-    """Clip array to a given value.
+    """
+    Clip array to a given value.
 
-    Similar to numpy.clip(), except that values less than threshmin or
-    greater than threshmax are replaced by newval, instead of by
-    threshmin and threshmax respectively.
+    Similar to numpy.clip(), except that values less than `threshmin` or
+    greater than `threshmax` are replaced by `newval`, instead of by
+    `threshmin` and `threshmax` respectively.
 
     Parameters
     ----------
@@ -1121,7 +922,9 @@ def threshold(a, threshmin=None, threshmax=None, newval=0):
 
     Returns
     -------
-    a, with values less (greater) than threshmin (threshmax) replaced with newval.
+    threshold : ndarray
+        Returns `a`, with values less then `threshmin` and values greater
+        `threshmax` replaced with `newval`.
 
     """
     a = ma.array(a, copy=True)
@@ -1135,26 +938,29 @@ def threshold(a, threshmin=None, threshmax=None, newval=0):
 
 
 def trima(a, limits=None, inclusive=(True,True)):
-    """Trims an array by masking the data outside some given limits.
+    """
+    Trims an array by masking the data outside some given limits.
+
     Returns a masked version of the input array.
 
     Parameters
     ----------
-    a : sequence
+    a : array_like
         Input array.
     limits : {None, tuple}, optional
         Tuple of (lower limit, upper limit) in absolute values.
         Values of the input array lower (greater) than the lower (upper) limit
-        will be masked. A limit is None indicates an open interval.
-    inclusive : {(True,True) tuple}, optional
+        will be masked.  A limit is None indicates an open interval.
+    inclusive : (bool, bool) tuple, optional
         Tuple of (lower flag, upper flag), indicating whether values exactly
         equal to the lower (upper) limit are allowed.
 
     """
     a = ma.asarray(a)
     a.unshare_mask()
-    if limits is None:
+    if (limits is None) or (limits == (None, None)):
         return a
+
     (lower_lim, upper_lim) = limits
     (lower_in, upper_in) = inclusive
     condition = False
@@ -1168,6 +974,7 @@ def trima(a, limits=None, inclusive=(True,True)):
             condition |= (a > upper_lim)
         else:
             condition |= (a >= upper_lim)
+
     a[condition.filled(True)] = masked
     return a
 
@@ -1292,7 +1099,9 @@ def trim(a, limits=None, inclusive=(True,True), relative=False, axis=None):
         return trimr(a, limits=limits, inclusive=inclusive, axis=axis)
     else:
         return trima(a, limits=limits, inclusive=inclusive)
-trim.__doc__ = trim.__doc__ % trimdoc
+
+if trim.__doc__ is not None:
+    trim.__doc__ = trim.__doc__ % trimdoc
 
 
 def trimboth(data, proportiontocut=0.2, inclusive=(True,True), axis=None):
@@ -1470,7 +1279,6 @@ def trimmed_stde(a, limits=(0.1,0.1), inclusive=(1,1), axis=None):
             else:
                 upidx = n - np.round(n*up_limit)
             a[idx[upidx:]] = masked
-        nsize = a.count()
         a[idx[:lowidx]] = a[idx[lowidx]]
         a[idx[upidx:]] = a[idx[upidx-1]]
         winstd = a.std(ddof=1)
@@ -1494,7 +1302,6 @@ def trimmed_stde(a, limits=(0.1,0.1), inclusive=(1,1), axis=None):
     #
     (loinc, upinc) = inclusive
     if (axis is None):
-        shp = a.shape
         return _trimmed_stde_1D(a.ravel(),lolim,uplim,loinc,upinc)
     else:
         if a.ndim > 2:
@@ -1509,7 +1316,14 @@ tmean.__doc__ = stats.tmean.__doc__
 
 
 def tvar(a, limits=None, inclusive=(True,True)):
-    return trima(a, limits=limits, inclusive=inclusive).var()
+    a = a.astype(float).ravel()
+    if limits is None:
+        n = (~a.mask).sum()  # todo: better way to do that?
+        r = trima(a, limits=limits, inclusive=inclusive).var() * (n/(n-1.))
+    else:
+        raise ValueError('mstats.tvar() with limits not implemented yet so far')
+
+    return r
 tvar.__doc__ = stats.tvar.__doc__
 
 
@@ -1531,19 +1345,19 @@ def tsem(a, limits=None, inclusive=(True,True)):
     a = ma.asarray(a).ravel()
     if limits is None:
         n = float(a.count())
-        return a.std()/ma.sqrt(n)
+        return a.std(ddof=1)/ma.sqrt(n)
     am = trima(a.ravel(), limits, inclusive)
-    sd = np.sqrt(am.var())
-    return sd / am.count()
+    sd = np.sqrt(am.var(ddof=1))
+    return sd / np.sqrt(am.count())
 tsem.__doc__ = stats.tsem.__doc__
 
 
-def winsorize(a, limits=None, inclusive=(True,True), inplace=False, axis=None):
-    """
-    Returns a Winsorized version of the input array.
+def winsorize(a, limits=None, inclusive=(True, True), inplace=False,
+              axis=None):
+    """Returns a Winsorized version of the input array.
 
     The (limits[0])th lowest values are set to the (limits[0])th percentile,
-    and the (limits[1])th highest values are set to the (limits[1])th
+    and the (limits[1])th highest values are set to the (1 - limits[1])th
     percentile.
     Masked values are skipped.
 
@@ -1569,29 +1383,34 @@ def winsorize(a, limits=None, inclusive=(True,True), inplace=False, axis=None):
         Axis along which to trim. If None, the whole array is trimmed, but its
         shape is maintained.
 
+    Notes
+    -----
+    This function is applied to reduce the effect of possibly spurious outliers
+    by limiting the extreme values.
+
     """
     def _winsorize1D(a, low_limit, up_limit, low_include, up_include):
         n = a.count()
         idx = a.argsort()
         if low_limit:
             if low_include:
-                lowidx = int(low_limit*n)
+                lowidx = int(low_limit * n)
             else:
-                lowidx = np.round(low_limit*n)
+                lowidx = np.round(low_limit * n)
             a[idx[:lowidx]] = a[idx[lowidx]]
         if up_limit is not None:
             if up_include:
-                upidx = n - int(n*up_limit)
+                upidx = n - int(n * up_limit)
             else:
-                upidx = n - np.round(n*up_limit)
-            a[idx[upidx:]] = a[idx[upidx-1]]
+                upidx = n - np.round(n * up_limit)
+            a[idx[upidx:]] = a[idx[upidx - 1]]
         return a
     # We gonna modify a: better make a copy
     a = ma.array(a, copy=np.logical_not(inplace))
     #
     if limits is None:
         return a
-    if (not isinstance(limits,tuple)) and isinstance(limits,float):
+    if (not isinstance(limits, tuple)) and isinstance(limits, float):
         limits = (limits, limits)
     # Check the limits
     (lolim, uplim) = limits
@@ -1607,9 +1426,10 @@ def winsorize(a, limits=None, inclusive=(True,True), inplace=False, axis=None):
     #
     if axis is None:
         shp = a.shape
-        return _winsorize1D(a.ravel(),lolim,uplim,loinc,upinc).reshape(shp)
+        return _winsorize1D(a.ravel(), lolim, uplim, loinc, upinc).reshape(shp)
     else:
-        return ma.apply_along_axis(_winsorize1D, axis,a,lolim,uplim,loinc,upinc)
+        return ma.apply_along_axis(_winsorize1D, axis, a, lolim, uplim, loinc,
+                                   upinc)
 
 
 #####--------------------------------------------------------------------------
@@ -1665,8 +1485,8 @@ skew.__doc__ = stats.skew.__doc__
 
 def kurtosis(a, axis=0, fisher=True, bias=True):
     a, axis = _chk_asarray(a, axis)
-    m2 = moment(a,2,axis)
-    m4 = moment(a,4,axis)
+    m2 = moment(a, 2, axis)
+    m4 = moment(a, 4, axis)
     olderr = np.seterr(all='ignore')
     try:
         vals = ma.where(m2 == 0, 0, m4 / m2**2.0)
@@ -1689,7 +1509,7 @@ def kurtosis(a, axis=0, fisher=True, bias=True):
 kurtosis.__doc__ = stats.kurtosis.__doc__
 
 
-def describe(a, axis=0):
+def describe(a, axis=0,ddof=0):
     """
     Computes several descriptive statistics of the passed array.
 
@@ -1698,6 +1518,10 @@ def describe(a, axis=0):
     a : array
 
     axis : int or None
+
+    ddof : int
+        degree of freedom (default 0); note that default ddof is different
+        from the same routine in stats.describe
 
     Returns
     -------
@@ -1734,7 +1558,7 @@ def describe(a, axis=0):
     n = a.count(axis)
     mm = (ma.minimum.reduce(a), ma.maximum.reduce(a))
     m = a.mean(axis)
-    v = a.var(axis)
+    v = a.var(axis,ddof=ddof)
     sk = skew(a, axis)
     kurt = kurtosis(a, axis)
     return n, mm, m, v, sk, kurt
@@ -1744,15 +1568,15 @@ def describe(a, axis=0):
 
 def stde_median(data, axis=None):
     """Returns the McKean-Schrader estimate of the standard error of the sample
-median along the given axis. masked values are discarded.
+    median along the given axis. masked values are discarded.
 
     Parameters
     ----------
-        data : ndarray
-            Data to trim.
-        axis : {None,int}, optional
-            Axis along which to perform the trimming.
-            If None, the input array is first flattened.
+    data : ndarray
+        Data to trim.
+    axis : {None,int}, optional
+        Axis along which to perform the trimming.
+        If None, the input array is first flattened.
 
     """
     def _stdemed_1D(data):
@@ -1783,9 +1607,9 @@ def skewtest(a, axis=0):
     b2 = skew(a,axis)
     n = a.count(axis)
     if np.min(n) < 8:
-        warnings.warn(
-            "skewtest only valid for n>=8 ... continuing anyway, n=%i" %
-            np.min(n))
+        raise ValueError(
+            "skewtest is not valid with less than 8 samples; %i samples"
+            " were given." % np.min(n))
     y = b2 * ma.sqrt(((n+1)*(n+3)) / (6.0*(n-2)))
     beta2 = (3.0*(n*n+27*n-70)*(n+1)*(n+3)) / ((n-2.0)*(n+5)*(n+7)*(n+9))
     W2 = -1 + ma.sqrt(2*(beta2-1))
@@ -1793,37 +1617,47 @@ def skewtest(a, axis=0):
     alpha = ma.sqrt(2.0/(W2-1))
     y = ma.where(y == 0, 1, y)
     Z = delta*ma.log(y/alpha + ma.sqrt((y/alpha)**2+1))
-    return Z, (1.0 - stats.zprob(Z))*2
+    return Z, 2 * distributions.norm.sf(np.abs(Z))
 skewtest.__doc__ = stats.skewtest.__doc__
 
 
 def kurtosistest(a, axis=0):
     a, axis = _chk_asarray(a, axis)
-    n = a.count(axis=axis).astype(float)
+    n = a.count(axis=axis)
+    if np.min(n) < 5:
+        raise ValueError(
+            "kurtosistest requires at least 5 observations; %i observations"
+            " were given." % np.min(n))
     if np.min(n) < 20:
         warnings.warn(
             "kurtosistest only valid for n>=20 ... continuing anyway, n=%i" %
             np.min(n))
+
     b2 = kurtosis(a, axis, fisher=False)
     E = 3.0*(n-1) / (n+1)
-    varb2 = 24.0*n*(n-2)*(n-3) / ((n+1)*(n+1)*(n+3)*(n+5))
+    varb2 = 24.0*n*(n-2.)*(n-3) / ((n+1)*(n+1.)*(n+3)*(n+5))
     x = (b2-E)/ma.sqrt(varb2)
     sqrtbeta1 = 6.0*(n*n-5*n+2)/((n+7)*(n+9)) * np.sqrt((6.0*(n+3)*(n+5)) /
                                                         (n*(n-2)*(n-3)))
     A = 6.0 + 8.0/sqrtbeta1 * (2.0/sqrtbeta1 + np.sqrt(1+4.0/(sqrtbeta1**2)))
     term1 = 1 - 2./(9.0*A)
     denom = 1 + x*ma.sqrt(2/(A-4.0))
-    denom[denom < 0] = masked
+    if np.ma.isMaskedArray(denom):
+        # For multi-dimensional array input
+        denom[denom < 0] = masked
+    elif denom < 0:
+        denom = masked
+
     term2 = ma.power((1-2.0/A)/denom,1/3.0)
     Z = (term1 - term2) / np.sqrt(2/(9.0*A))
-    return Z, (1.0-stats.zprob(Z))*2
+    return Z, 2 * distributions.norm.sf(np.abs(Z))
 kurtosistest.__doc__ = stats.kurtosistest.__doc__
 
 
 def normaltest(a, axis=0):
     a, axis = _chk_asarray(a, axis)
-    s,_ = skewtest(a,axis)
-    k,_ = kurtosistest(a,axis)
+    s, _ = skewtest(a, axis)
+    k, _ = kurtosistest(a, axis)
     k2 = s*s + k*k
     return k2, stats.chisqprob(k2,2)
 normaltest.__doc__ = stats.normaltest.__doc__
@@ -1900,7 +1734,9 @@ def mquantiles(a, prob=list([.25,.5,.75]), alphap=.4, betap=.4, axis=None,
 
     References
     ----------
-    .. [1] *R* statistical software at http://www.r-project.org/
+    .. [1] *R* statistical software: http://www.r-project.org/
+    .. [2] *R* ``quantile`` function:
+            http://stat.ethz.ch/R-manual/R-devel/library/stats/html/quantile.html
 
     Examples
     --------
@@ -1990,9 +1826,9 @@ def plotting_positions(data, alpha=0.4, beta=0.4):
     Plotting positions are defined as ``(i-alpha)/(n+1-alpha-beta)``, where:
         - i is the rank order statistics
         - n is the number of unmasked values along the given axis
-        - alpha and beta are two parameters.
+        - `alpha` and `beta` are two parameters.
 
-    Typical values for alpha and beta are:
+    Typical values for `alpha` and `beta` are:
         - (0,1)    : ``p(k) = k/n``, linear interpolation of cdf (R, type 4)
         - (.5,.5)  : ``p(k) = (k-1/2.)/n``, piecewise linear function
           (R, type 5)
@@ -2042,13 +1878,13 @@ meppf = plotting_positions
 
 def obrientransform(*args):
     """
-Computes a transform on input data (any number of columns).  Used to
-test for homogeneity of variance prior to running one-way stats.  Each
-array in *args is one level of a factor.  If an F_oneway() run on the
-transformed data and found significant, variances are unequal.   From
-Maxwell and Delaney, p.112.
+    Computes a transform on input data (any number of columns).  Used to
+    test for homogeneity of variance prior to running one-way stats.  Each
+    array in *args is one level of a factor.  If an F_oneway() run on the
+    transformed data and found significant, variances are unequal.   From
+    Maxwell and Delaney, p.112.
 
-Returns: transformed data for use in an ANOVA
+    Returns: transformed data for use in an ANOVA
     """
     data = argstoarray(*args).T
     v = data.var(axis=0,ddof=1)
@@ -2071,24 +1907,68 @@ def signaltonoise(data, axis=0):
 
     Parameters
     ----------
-        data : sequence
-            Input data
-        axis : {0, int}, optional
-            Axis along which to compute. If None, the computation is performed
-            on a flat version of the array.
-"""
+    data : sequence
+        Input data
+    axis : {0, int}, optional
+        Axis along which to compute. If None, the computation is performed
+        on a flat version of the array.
+    """
     data = ma.array(data, copy=False)
     m = data.mean(axis)
     sd = data.std(axis, ddof=0)
     return m/sd
 
 
-def sem(a, axis=0):
+def sem(a, axis=0, ddof=1):
+    """
+    Calculates the standard error of the mean of the input array.
+
+    Also sometimes called standard error of measurement.
+
+    Parameters
+    ----------
+    a : array_like
+        An array containing the values for which the standard error is
+        returned.
+    axis : int or None, optional.
+        If axis is None, ravel `a` first. If axis is an integer, this will be
+        the axis over which to operate. Defaults to 0.
+    ddof : int, optional
+        Delta degrees-of-freedom. How many degrees of freedom to adjust
+        for bias in limited samples relative to the population estimate
+        of variance. Defaults to 1.
+
+    Returns
+    -------
+    s : ndarray or float
+        The standard error of the mean in the sample(s), along the input axis.
+
+    Notes
+    -----
+    The default value for `ddof` changed in scipy 0.15.0 to be consistent with
+    `stats.sem` as well as with the most common definition used (like in the R
+    documentation).
+
+    Examples
+    --------
+    Find standard error along the first axis:
+
+    >>> from scipy import stats
+    >>> a = np.arange(20).reshape(5,4)
+    >>> stats.sem(a)
+    array([ 2.8284,  2.8284,  2.8284,  2.8284])
+
+    Find standard error across the whole array, using n degrees of freedom:
+
+    >>> stats.sem(a, axis=None, ddof=0)
+    1.2893796958227628
+
+    """
     a, axis = _chk_asarray(a, axis)
     n = a.count(axis=axis)
-    s = a.std(axis=axis,ddof=0) / ma.sqrt(n-1)
+    s = a.std(axis=axis, ddof=ddof) / ma.sqrt(n)
     return s
-sem.__doc__ = stats.sem.__doc__
+
 
 zmap = stats.zmap
 zscore = stats.zscore
@@ -2101,13 +1981,14 @@ zscore = stats.zscore
 
 def f_oneway(*args):
     """
-Performs a 1-way ANOVA, returning an F-value and probability given
-any number of groups.  From Heiman, pp.394-7.
+    Performs a 1-way ANOVA, returning an F-value and probability given
+    any number of groups.  From Heiman, pp.394-7.
 
-Usage:   f_oneway (*args)    where *args is 2 or more arrays, one per
-                                  treatment group
-Returns: f-value, probability
-"""
+    Usage: ``f_oneway(*args)``, where ``*args`` is 2 or more arrays,
+                                one per treatment group.
+    Returns: f-value, probability
+
+    """
     # Construct a single array of arguments: each row is a group
     data = argstoarray(*args)
     ngroups = len(data)
@@ -2120,12 +2001,12 @@ Returns: f-value, probability
     msb = ssbg/float(dfbg)
     msw = sswg/float(dfwg)
     f = msb/msw
-    prob = stats.fprob(dfbg,dfwg,f)
+    prob = special.fdtrc(dfbg, dfwg, f)  # equivalent to stats.f.sf
     return f, prob
 
 
 def f_value_wilks_lambda(ER, EF, dfnum, dfden, a, b):
-    """Calculation of Wilks lambda F-statistic for multivarite data, per
+    """Calculation of Wilks lambda F-statistic for multivariate data, per
     Maxwell & Delaney p.657.
     """
     ER = ma.array(ER, copy=False, ndmin=2)
@@ -2174,9 +2055,7 @@ def friedmanchisquare(*args):
     repeats = np.array([find_repeats(_) for _ in ranked.T], dtype=object)
     ties = repeats[repeats.nonzero()].reshape(-1,2)[:,-1].astype(int)
     tie_correction = 1 - (ties**3-ties).sum()/float(n*(k**3-k))
-    #
+
     ssbg = np.sum((ranked.sum(-1) - n*(k+1)/2.)**2)
     chisq = ssbg * 12./(n*k*(k+1)) * 1./tie_correction
     return chisq, stats.chisqprob(chisq,k-1)
-
-#-############################################################################-#

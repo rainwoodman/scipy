@@ -204,7 +204,7 @@ class UnivariateSpline(object):
         else:
             if not n <= nest:
                 raise ValueError("`nest` can only be increased")
-        t, c, fpint, nrdata = [np.resize(data[n], nest) for n in [8,9,11,12]]
+        t, c, fpint, nrdata = [np.resize(data[j], nest) for j in [8,9,11,12]]
 
         args = data[:8] + (t,c,n,fpint,nrdata,data[13])
         data = dfitpack.fpcurf1(*args)
@@ -588,6 +588,85 @@ class _BivariateSplineBase(object):
         """ Return spline coefficients."""
         return self.tck[2]
 
+    def __call__(self, x, y, mth=None, dx=0, dy=0, grid=True):
+        """
+        Evaluate the spline or its derivatives at given positions.
+
+        Parameters
+        ----------
+        x, y : array-like
+            Input coordinates.
+
+            If `grid` is False, evaluate the spline at points ``(x[i],
+            y[i]), i=0, ..., len(x)-1``.  Standard Numpy broadcasting
+            is obeyed.
+
+            If `grid` is True: evaluate spline at the grid points
+            defined by the coordinate arrays x, y. The arrays must be
+            sorted to increasing order.
+        dx : int
+            Order of x-derivative
+
+            .. versionadded:: 0.14.0
+        dy : int
+            Order of y-derivative
+
+            .. versionadded:: 0.14.0
+        grid : bool
+            Whether to evaluate the results on a grid spanned by the
+            input arrays, or at points specified by the input arrays.
+
+            .. versionadded:: 0.14.0
+
+        mth : str
+            Deprecated argument. Has no effect.
+
+        """
+        x = np.asarray(x)
+        y = np.asarray(y)
+
+        if mth is not None:
+            warnings.warn("The `mth` argument is deprecated and will be removed",
+                          FutureWarning)
+
+        tx, ty, c = self.tck[:3]
+        kx, ky = self.degrees
+        if grid:
+            if x.size == 0 or y.size == 0:
+                return np.zeros((x.size, y.size), dtype=self.tck[2].dtype)
+
+            if dx or dy:
+                z,ier = dfitpack.parder(tx,ty,c,kx,ky,dx,dy,x,y)
+                if not ier == 0:
+                    raise ValueError("Error code returned by parder: %s" % ier)
+            else:
+                z,ier = dfitpack.bispev(tx,ty,c,kx,ky,x,y)
+                if not ier == 0:
+                    raise ValueError("Error code returned by bispev: %s" % ier)
+        else:
+            # standard Numpy broadcasting
+            if x.shape != y.shape:
+                x, y = np.broadcast_arrays(x, y)
+
+            shape = x.shape
+            x = x.ravel()
+            y = y.ravel()
+
+            if x.size == 0 or y.size == 0:
+                return np.zeros(shape, dtype=self.tck[2].dtype)
+
+            if dx or dy:
+                z,ier = dfitpack.pardeu(tx,ty,c,kx,ky,dx,dy,x,y)
+                if not ier == 0:
+                    raise ValueError("Error code returned by pardeu: %s" % ier)
+            else:
+                z,ier = dfitpack.bispeu(tx,ty,c,kx,ky,x,y)
+                if not ier == 0:
+                    raise ValueError("Error code returned by bispeu: %s" % ier)
+
+            z = z.reshape(shape)
+        return z
+
 
 _surfit_messages = {1:"""
 The required storage space exceeds the available storage space: nxest
@@ -639,6 +718,7 @@ class BivariateSpline(_BivariateSplineBase):
     the rectangle ``[xb, xe] * [yb, ye]`` calculated from a given set
     of data points ``(x, y, z)``.
 
+    This class is meant to be subclassed, not instantiated directly.
     To construct these splines, call either `SmoothBivariateSpline` or
     `LSQBivariateSpline`.
 
@@ -655,34 +735,28 @@ class BivariateSpline(_BivariateSplineBase):
     bisplev : older wrapping of FITPACK
 
     """
-    def __call__(self, x, y, mth='array'):
-        """ Evaluate spline at the grid points defined by the coordinate arrays
-        x,y."""
-        x = np.asarray(x)
-        y = np.asarray(y)
-        # empty input yields empty output
-        if (x.size == 0) and (y.size == 0):
-            return array([])
 
-        if mth == 'array':
-            tx,ty,c = self.tck[:3]
-            kx,ky = self.degrees
-            z,ier = dfitpack.bispev(tx,ty,c,kx,ky,x,y)
-            if not ier == 0:
-                raise ValueError("Error code returned by bispev: %s" % ier)
-            return z
-        raise NotImplementedError('unknown method mth=%s' % mth)
+    def ev(self, xi, yi, dx=0, dy=0):
+        """
+        Evaluate the spline at points
 
-    def ev(self, xi, yi):
+        Returns the interpolated value at ``(xi[i], yi[i]),
+        i=0,...,len(xi)-1``.
+
+        Parameters
+        ----------
+        xi, yi : array-like
+            Input coordinates. Standard Numpy broadcasting is obeyed.
+        dx : int
+            Order of x-derivative
+
+            .. versionadded:: 0.14.0
+        dy : int
+            Order of y-derivative
+
+            .. versionadded:: 0.14.0
         """
-        Evaluate spline at points (x[i], y[i]), i=0,...,len(x)-1
-        """
-        tx,ty,c = self.tck[:3]
-        kx,ky = self.degrees
-        zi,ier = dfitpack.bispeu(tx,ty,c,kx,ky,xi,yi)
-        if not ier == 0:
-            raise ValueError("Error code returned by bispeu: %s" % ier)
-        return zi
+        return self.__call__(xi, yi, dx=dx, dy=dy, grid=False)
 
     def integral(self, xa, xb, ya, yb):
         """
@@ -752,6 +826,11 @@ class SmoothBivariateSpline(BivariateSpline):
                                                          xb,xe,yb,ye,
                                                          kx,ky,s=s,
                                                          eps=eps,lwrk2=1)
+        if ier > 10:          # lwrk2 was to small, re-run
+            nx,tx,ny,ty,c,fp,wrk1,ier = dfitpack.surfit_smth(x,y,z,w,
+                                                         xb,xe,yb,ye,
+                                                         kx,ky,s=s,
+                                                         eps=eps,lwrk2=ier)
         if ier in [0,-1,-2]:  # normal return
             pass
         else:
@@ -888,7 +967,7 @@ class RectBivariateSpline(BivariateSpline):
         nx, tx, ny, ty, c, fp, ier = dfitpack.regrid_smth(x, y, z, xb, xe, yb,
                                                           ye, kx, ky, s)
 
-        if not ier in [0, -1, -2]:
+        if ier not in [0, -1, -2]:
             msg = _surfit_messages.get(ier, 'ier=%s' % (ier))
             raise ValueError(msg)
 
@@ -938,44 +1017,69 @@ class SphereBivariateSpline(_BivariateSplineBase):
         to create a BivariateSpline using weighted least-squares fitting
     """
 
-    def __call__(self, theta, phi):
-        """ Evaluate the spline at the grid ponts defined by the coordinate
-        arrays theta, phi. """
+    def __call__(self, theta, phi, dtheta=0, dphi=0, grid=True):
+        """
+        Evaluate the spline or its derivatives at given positions.
+
+        Parameters
+        ----------
+        theta, phi : array-like
+            Input coordinates.
+
+            If `grid` is False, evaluate the spline at points
+            ``(theta[i], phi[i]), i=0, ..., len(x)-1``.  Standard
+            Numpy broadcasting is obeyed.
+
+            If `grid` is True: evaluate spline at the grid points
+            defined by the coordinate arrays theta, phi. The arrays
+            must be sorted to increasing order.
+        dtheta : int
+            Order of theta-derivative
+
+            .. versionadded:: 0.14.0
+        dphi : int
+            Order of phi-derivative
+
+            .. versionadded:: 0.14.0
+        grid : bool
+            Whether to evaluate the results on a grid spanned by the
+            input arrays, or at points specified by the input arrays.
+
+            .. versionadded:: 0.14.0
+
+        """
         theta = np.asarray(theta)
         phi = np.asarray(phi)
-        # empty input yields empty output
-        if (theta.size == 0) and (phi.size == 0):
-            return array([])
-        if theta.min() < 0. or theta.max() > np.pi:
-            raise ValueError("requested theta out of bounds.")
-        if phi.min() < 0. or phi.max() > 2. * np.pi:
-            raise ValueError("requested phi out of bounds.")
-        tx, ty, c = self.tck[:3]
-        kx, ky = self.degrees
-        z, ier = dfitpack.bispev(tx, ty, c, kx, ky, theta, phi)
-        if not ier == 0:
-            raise ValueError("Error code returned by bispev: %s" % ier)
-        return z
 
-    def ev(self, thetai, phii):
-        """ Evaluate the spline at the points (theta[i], phi[i]),
-        i=0,...,len(theta)-1
+        if theta.size > 0 and (theta.min() < 0. or theta.max() > np.pi):
+            raise ValueError("requested theta out of bounds.")
+        if phi.size > 0 and (phi.min() < 0. or phi.max() > 2. * np.pi):
+            raise ValueError("requested phi out of bounds.")
+
+        return _BivariateSplineBase.__call__(self, theta, phi,
+                                             dx=dtheta, dy=dphi, grid=grid)
+
+    def ev(self, theta, phi, dtheta=0, dphi=0):
         """
-        thetai = np.asarray(thetai)
-        phii = np.asarray(phii)
-        # empty input yields empty output
-        if (thetai.size == 0) and (phii.size == 0):
-            return array([])
-        if thetai.min() < 0. or thetai.max() > np.pi:
-            raise ValueError("requested thetai out of bounds.")
-        if phii.min() < 0. or phii.max() > 2. * np.pi:
-            raise ValueError("requested phii out of bounds.")
-        tx, ty, c = self.tck[:3]
-        kx, ky = self.degrees
-        zi, ier = dfitpack.bispeu(tx, ty, c, kx, ky, thetai, phii)
-        if not ier == 0:
-            raise ValueError("Error code returned by bispeu: %s" % ier)
-        return zi
+        Evaluate the spline at points
+
+        Returns the interpolated value at ``(theta[i], phi[i]),
+        i=0,...,len(theta)-1``.
+
+        Parameters
+        ----------
+        theta, phi : array-like
+            Input coordinates. Standard Numpy broadcasting is obeyed.
+        dtheta : int
+            Order of theta-derivative
+
+            .. versionadded:: 0.14.0
+        dphi : int
+            Order of phi-derivative
+
+            .. versionadded:: 0.14.0
+        """
+        return self.__call__(theta, phi, dtheta=dtheta, dphi=dphi, grid=False)
 
 
 class SmoothSphereBivariateSpline(SphereBivariateSpline):
@@ -1060,9 +1164,10 @@ class SmoothSphereBivariateSpline(SphereBivariateSpline):
         nt_, tt_, np_, tp_, c, fp, ier = dfitpack.spherfit_smth(theta, phi,
                                                                 r, w=w, s=s,
                                                                 eps=eps)
-        if not ier in [0, -1, -2]:
+        if ier not in [0, -1, -2]:
             message = _spherefit_messages.get(ier, 'ier=%s' % (ier))
             raise ValueError(message)
+
         self.fp = fp
         self.tck = tt_[:nt_], tp_[:np_], c[:(nt_ - 4) * (np_ - 4)]
         self.degrees = (3, 3)
@@ -1163,9 +1268,10 @@ class LSQSphereBivariateSpline(SphereBivariateSpline):
             deficiency = 6 + (nt_ - 8) * (np_ - 7) + ier
             message = _spherefit_messages.get(-3) % (deficiency, -ier)
             warnings.warn(message)
-        elif not ier in [0, -1, -2]:
+        elif ier not in [0, -1, -2]:
             message = _spherefit_messages.get(ier, 'ier=%s' % (ier))
             raise ValueError(message)
+
         self.fp = fp
         self.tck = tt_, tp_, c
         self.degrees = (3, 3)
@@ -1382,7 +1488,7 @@ class RectSphereBivariateSpline(SphereBivariateSpline):
         nu, tu, nv, tv, c, fp, ier = dfitpack.regrid_smth_spher(iopt, ider,
                                        u.copy(), v.copy(), r.copy(), r0, r1, s)
 
-        if not ier in [0, -1, -2]:
+        if ier not in [0, -1, -2]:
             msg = _spfit_messages.get(ier, 'ier=%s' % (ier))
             raise ValueError(msg)
 

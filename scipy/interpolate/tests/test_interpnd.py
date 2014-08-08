@@ -1,5 +1,8 @@
 from __future__ import division, print_function, absolute_import
 
+import os
+import warnings
+
 import numpy as np
 from numpy.testing import assert_equal, assert_allclose, assert_almost_equal, \
         run_module_suite, assert_raises
@@ -8,6 +11,11 @@ import scipy.interpolate.interpnd as interpnd
 import scipy.spatial.qhull as qhull
 
 import pickle
+
+
+def data_file(basename):
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                        'data', basename)
 
 
 class TestLinearNDInterpolation(object):
@@ -95,6 +103,63 @@ class TestLinearNDInterpolation(object):
 
         assert_almost_equal(zi, ip(xx, yy))
 
+    def test_smoketest_rescale(self):
+        # Test at single points
+        x = np.array([(0, 0), (-5, -5), (-5, 5), (5, 5), (2.5, 3)],
+                     dtype=np.double)
+        y = np.arange(x.shape[0], dtype=np.double)
+
+        yi = interpnd.LinearNDInterpolator(x, y, rescale=True)(x)
+        assert_almost_equal(y, yi)
+
+    def test_square_rescale(self):
+        # Test barycentric interpolation on a rectangle with rescaling
+        # agaings the same implementation without rescaling
+
+        points = np.array([(0,0), (0,100), (10,100), (10,0)], dtype=np.double)
+        values = np.array([1., 2., -3., 5.], dtype=np.double)
+
+        xx, yy = np.broadcast_arrays(np.linspace(0, 10, 14)[:,None],
+                                     np.linspace(0, 100, 14)[None,:])
+        xx = xx.ravel()
+        yy = yy.ravel()
+        xi = np.array([xx, yy]).T.copy()
+        zi = interpnd.LinearNDInterpolator(points, values)(xi)
+        zi_rescaled = interpnd.LinearNDInterpolator(points, values,
+                rescale=True)(xi)
+
+        assert_almost_equal(zi, zi_rescaled)
+
+    def test_tripoints_input_rescale(self):
+        # Test at single points
+        x = np.array([(0,0), (-5,-5), (-5,5), (5, 5), (2.5, 3)],
+                     dtype=np.double)
+        y = np.arange(x.shape[0], dtype=np.double)
+        y = y - 3j*y
+
+        tri = qhull.Delaunay(x)
+        yi = interpnd.LinearNDInterpolator(tri.points, y)(x)
+        yi_rescale = interpnd.LinearNDInterpolator(tri.points, y,
+                rescale=True)(x)
+        assert_almost_equal(yi, yi_rescale)
+
+    def test_tri_input_rescale(self):
+        # Test at single points
+        x = np.array([(0,0), (-5,-5), (-5,5), (5, 5), (2.5, 3)],
+                     dtype=np.double)
+        y = np.arange(x.shape[0], dtype=np.double)
+        y = y - 3j*y
+
+        tri = qhull.Delaunay(x)
+        try:
+            interpnd.LinearNDInterpolator(tri, y, rescale=True)(x)
+        except ValueError as e:
+            if str(e) != ("Rescaling is not supported when passing a "
+                          "Delaunay triangulation as ``points``."):
+                raise
+        except:
+            raise
+
     def test_pickle(self):
         # Test at single points
         np.random.seed(1234)
@@ -130,10 +195,22 @@ class TestEstimateGradients2DGlobal(object):
             assert_allclose(dz, np.array(grad)[None,:] + 0*dz,
                             rtol=1e-5, atol=1e-5, err_msg="item %d" % j)
 
+    def test_regression_2359(self):
+        # Check regression --- for certain point sets, gradient
+        # estimation could end up in an infinite loop
+        points = np.load(data_file('estimate_gradients_hang.npy'))
+        values = np.random.rand(points.shape[0])
+        tri = qhull.Delaunay(points)
+
+        # This should not hang
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=interpnd.GradientEstimationWarning)
+            interpnd.estimate_gradients_2d_global(tri, values, maxiter=1)
+
 
 class TestCloughTocher2DInterpolator(object):
 
-    def _check_accuracy(self, func, x=None, tol=1e-6, alternate=False, **kw):
+    def _check_accuracy(self, func, x=None, tol=1e-6, alternate=False, rescale=False, **kw):
         np.random.seed(1234)
         if x is None:
             x = np.array([(0, 0), (0, 1),
@@ -143,11 +220,11 @@ class TestCloughTocher2DInterpolator(object):
 
         if not alternate:
             ip = interpnd.CloughTocher2DInterpolator(x, func(x[:,0], x[:,1]),
-                                                     tol=1e-6)
+                                                     tol=1e-6, rescale=rescale)
         else:
             ip = interpnd.CloughTocher2DInterpolator((x[:,0], x[:,1]),
                                                      func(x[:,0], x[:,1]),
-                                                     tol=1e-6)
+                                                     tol=1e-6, rescale=rescale)
 
         p = np.random.rand(50, 2)
 
@@ -179,6 +256,12 @@ class TestCloughTocher2DInterpolator(object):
             self._check_accuracy(func, tol=1e-13, atol=1e-7, rtol=1e-7,
                                  alternate=True,
                                  err_msg="Function (alternate) %d" % j)
+            # check rescaling
+            self._check_accuracy(func, tol=1e-13, atol=1e-7, rtol=1e-7,
+                                 err_msg="Function (rescaled) %d" % j, rescale=True)
+            self._check_accuracy(func, tol=1e-13, atol=1e-7, rtol=1e-7,
+                                 alternate=True, rescale=True,
+                                 err_msg="Function (alternate, rescaled) %d" % j)
 
     def test_quadratic_smoketest(self):
         # Should be reasonably accurate for quadratic functions
@@ -192,6 +275,8 @@ class TestCloughTocher2DInterpolator(object):
         for j, func in enumerate(funcs):
             self._check_accuracy(func, tol=1e-9, atol=0.22, rtol=0,
                                  err_msg="Function %d" % j)
+            self._check_accuracy(func, tol=1e-9, atol=0.22, rtol=0,
+                                 err_msg="Function %d" % j, rescale=True)
 
     def test_tri_input(self):
         # Test at single points
@@ -203,6 +288,35 @@ class TestCloughTocher2DInterpolator(object):
         tri = qhull.Delaunay(x)
         yi = interpnd.CloughTocher2DInterpolator(tri, y)(x)
         assert_almost_equal(y, yi)
+
+    def test_tri_input_rescale(self):
+        # Test at single points
+        x = np.array([(0,0), (-5,-5), (-5,5), (5, 5), (2.5, 3)],
+                     dtype=np.double)
+        y = np.arange(x.shape[0], dtype=np.double)
+        y = y - 3j*y
+
+        tri = qhull.Delaunay(x)
+        try:
+            interpnd.CloughTocher2DInterpolator(tri, y, rescale=True)(x)
+        except ValueError as a:
+            if str(a) != ("Rescaling is not supported when passing a "
+                          "Delaunay triangulation as ``points``."):
+                raise
+        except:
+            raise
+
+    def test_tripoints_input_rescale(self):
+        # Test at single points
+        x = np.array([(0,0), (-5,-5), (-5,5), (5, 5), (2.5, 3)],
+                     dtype=np.double)
+        y = np.arange(x.shape[0], dtype=np.double)
+        y = y - 3j*y
+
+        tri = qhull.Delaunay(x)
+        yi = interpnd.CloughTocher2DInterpolator(tri.points, y)(x)
+        yi_rescale = interpnd.CloughTocher2DInterpolator(tri.points, y, rescale=True)(x)
+        assert_almost_equal(yi, yi_rescale)
 
     def test_dense(self):
         # Should be more accurate for dense meshes
@@ -221,6 +335,8 @@ class TestCloughTocher2DInterpolator(object):
         for j, func in enumerate(funcs):
             self._check_accuracy(func, x=grid, tol=1e-9, atol=5e-3, rtol=1e-2,
                                  err_msg="Function %d" % j)
+            self._check_accuracy(func, x=grid, tol=1e-9, atol=5e-3, rtol=1e-2,
+                                 err_msg="Function %d" % j, rescale=True)
 
     def test_wrong_ndim(self):
         x = np.random.randn(30, 3)
