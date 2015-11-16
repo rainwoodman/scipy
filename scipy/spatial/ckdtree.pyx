@@ -358,7 +358,6 @@ cdef extern from "ckdtree_methods.h":
                            np.intp_t     n_queries,
                            np.float64_t  *real_r,
                            np.intp_t     *results,
-                           np.intp_t     *idx,
                            const np.float64_t p)
 
     object count_neighbors_weighted(const ckdtree *self,
@@ -370,7 +369,6 @@ cdef extern from "ckdtree_methods.h":
                            np.intp_t     n_queries,
                            np.float64_t  *real_r,
                            np.float64_t     *results,
-                           np.intp_t     *idx,
                            const np.float64_t p)
                            
     object query_ball_point(const ckdtree *self,
@@ -1096,7 +1094,6 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
             np.ndarray[np.float64_t, ndim=1, mode="c"] real_r
             np.ndarray[np.float64_t, ndim=1, mode="c"] results
             np.ndarray[np.intp_t, ndim=1, mode="c"] iresults
-            np.ndarray[np.intp_t, ndim=1, mode="c"] idx
             np.ndarray[np.float64_t, ndim=1, mode="c"] w1, w1n
             np.ndarray[np.float64_t, ndim=1, mode="c"] w2, w2n
             np.float64_t *w1p
@@ -1124,14 +1121,12 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
                 if not ckdtree_isinf(real_r[i]):
                     real_r[i] = real_r[i] ** p
 
-        idx = np.arange(n_queries, dtype=np.intp)
-        
         if self_weights is None and other_weights is None:
             # unweighted, use the integer arithmetics
             iresults = np.zeros(n_queries, dtype=np.intp)
 
             count_neighbors_unweighted(<ckdtree*> self, <ckdtree*> other, n_queries,
-                            &real_r[0], &iresults[0], &idx[0], p)
+                            &real_r[0], &iresults[0], p)
         
             if r_ndim == 0:
                 if iresults[0] <= <np.intp_t> LONG_MAX:
@@ -1164,7 +1159,7 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
             count_neighbors_weighted(<ckdtree*> self, <ckdtree*> other,
                                     w1p, w2p, w1np, w2np,
                                     n_queries,
-                                    &real_r[0], &results[0], &idx[0], p)
+                                    &real_r[0], &results[0], p)
             if r_ndim == 0:
                 return results[0]
             else:
