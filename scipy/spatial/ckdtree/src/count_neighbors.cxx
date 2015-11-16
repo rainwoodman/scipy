@@ -122,7 +122,8 @@ traverse(const ckdtree *self, const ckdtree *other,
          npy_intp start, npy_intp end, npy_float64 *r, ResultType *results,
          const ckdtreenode *node1, const ckdtreenode *node2,
          RectRectDistanceTracker<MinMaxDist> *tracker,
-         int use_convolve)
+         int use_convolve,
+         float convolve_thresh)
 {
 
     const ckdtreenode *lnode1;
@@ -141,7 +142,7 @@ traverse(const ckdtree *self, const ckdtree *other,
 
     ResultType * old_results, *new_results;
     int old_use_convolve = use_convolve;
-    if (old_use_convolve || (end - start) * (end - start) > node1->children * node2->children) {
+    if (old_use_convolve || (end - start) > convolve_thresh * node1->children * node2->children) {
         /* all later levels must use_convolve */
         /* too many bins, better use non-cummulative traverse, then 'convolve it' */
         use_convolve = 1;
@@ -239,12 +240,12 @@ traverse(const ckdtree *self, const ckdtree *other,
             else {  /* 1 is a leaf node, 2 is inner node */
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1, node2->less, tracker, use_convolve);
+                    node1, node2->less, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
 
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1, node2->greater, tracker, use_convolve);
+                    node1, node2->greater, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
             }
         }
@@ -253,36 +254,36 @@ traverse(const ckdtree *self, const ckdtree *other,
                 /* 1 is an inner node, 2 is a leaf node */
                 tracker->push_less_of(1, node1);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->less, node2, tracker, use_convolve);
+                    node1->less, node2, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
                 
                 tracker->push_greater_of(1, node1);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->greater, node2, tracker, use_convolve);
+                    node1->greater, node2, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
             }
             else { /* 1 and 2 are inner nodes */
                 tracker->push_less_of(1, node1);
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->less, node2->less, tracker, use_convolve);
+                    node1->less, node2->less, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
                     
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->less, node2->greater, tracker, use_convolve);
+                    node1->less, node2->greater, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
                 tracker->pop();
                     
                 tracker->push_greater_of(1, node1);
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->greater, node2->less, tracker, use_convolve);
+                    node1->greater, node2->less, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
                     
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->greater, node2->greater, tracker, use_convolve);
+                    node1->greater, node2->greater, tracker, use_convolve, convolve_thresh);
                 tracker->pop();
                 tracker->pop();
             }
@@ -290,10 +291,11 @@ traverse(const ckdtree *self, const ckdtree *other,
     }
 
     if(use_convolve != old_use_convolve) {
+        for(j = start; j < end; ++j) {
+            results[j + 1] += results[j];
+        }
         for(i = start; i < end; ++i) {
-            for(j = start; j <= i; ++j) {
-                old_results[i] += results[j];
-            }
+            old_results[i] += results[i];
         } 
         free(results);
     }
@@ -303,14 +305,14 @@ template <typename WeightType, typename ResultType> PyObject*
 count_neighbors(const ckdtree *self, const ckdtree *other,
                 struct traverse_weights * w,
                 npy_intp n_queries, npy_float64 *real_r, ResultType *results,
-                const npy_float64 p)
+                const npy_float64 p, npy_float64 convolve_thresh)
 {
 
 #define HANDLE(cond, kls) \
     if(cond) { \
         RectRectDistanceTracker<kls> tracker(self, r1, r2, p, 0.0, 0.0);\
         traverse<kls, WeightType, ResultType>(self, other, w, 0, n_queries, real_r, results, \
-                 self->ctree, other->ctree, &tracker, 0); \
+                 self->ctree, other->ctree, &tracker, 0, convolve_thresh); \
     } else
 
     /* release the GIL */
@@ -354,8 +356,8 @@ count_neighbors(const ckdtree *self, const ckdtree *other,
 extern "C" PyObject*
 count_neighbors_unweighted(const ckdtree *self, const ckdtree *other,
                 npy_intp n_queries, npy_float64 *real_r, npy_intp *results,
-                const npy_float64 p) {
-    return count_neighbors<Unweighted, npy_intp>(self, other, NULL, n_queries, real_r, results, p);
+                const npy_float64 p, npy_float64 convolve_thresh) {
+    return count_neighbors<Unweighted, npy_intp>(self, other, NULL, n_queries, real_r, results, p, convolve_thresh);
 }
 
 extern "C" PyObject*
@@ -363,7 +365,7 @@ count_neighbors_weighted(const ckdtree *self, const ckdtree *other,
                 npy_float64 *self_weights, npy_float64 *other_weights, 
                 npy_float64 *self_node_weights, npy_float64 *other_node_weights, 
                 npy_intp n_queries, npy_float64 *real_r, npy_float64 *results,
-                const npy_float64 p) {
+                const npy_float64 p, npy_float64 convolve_thresh) {
 
     struct traverse_weights w = {0};
     if(self_weights) {
@@ -376,6 +378,6 @@ count_neighbors_weighted(const ckdtree *self, const ckdtree *other,
         w.other_weights = other_weights;
         w.other_node_weights = other_node_weights;
     }
-    return count_neighbors<Weighted, npy_float64>(self, other, &w, n_queries, real_r, results, p);
+    return count_neighbors<Weighted, npy_float64>(self, other, &w, n_queries, real_r, results, p, convolve_thresh);
 }
 

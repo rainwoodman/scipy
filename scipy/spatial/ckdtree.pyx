@@ -358,7 +358,8 @@ cdef extern from "ckdtree_methods.h":
                            np.intp_t     n_queries,
                            np.float64_t  *real_r,
                            np.intp_t     *results,
-                           const np.float64_t p)
+                           const np.float64_t p,
+                           const np.float64_t convolve_thresh)
 
     object count_neighbors_weighted(const ckdtree *self,
                            const ckdtree *other,
@@ -369,7 +370,8 @@ cdef extern from "ckdtree_methods.h":
                            np.intp_t     n_queries,
                            np.float64_t  *real_r,
                            np.float64_t     *results,
-                           const np.float64_t p)
+                           const np.float64_t p,
+                           const np.float64_t convolve_thresh)
                            
     object query_ball_point(const ckdtree *self,
                             const np.float64_t *x,
@@ -1052,7 +1054,7 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
 
     @cython.boundscheck(False)
     def count_neighbors(cKDTree self, cKDTree other, object r, np.float64_t p=2., 
-                        object self_weights=None, object other_weights=None):
+                        object self_weights=None, object other_weights=None, np.float64_t convolve_thresh=0):
         """
         count_neighbors(self, other, r, p=2., self_weights=None, other_weights=None)
 
@@ -1126,7 +1128,7 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
             iresults = np.zeros(n_queries, dtype=np.intp)
 
             count_neighbors_unweighted(<ckdtree*> self, <ckdtree*> other, n_queries,
-                            &real_r[0], &iresults[0], p)
+                            &real_r[0], &iresults[0], p, convolve_thresh)
         
             if r_ndim == 0:
                 if iresults[0] <= <np.intp_t> LONG_MAX:
@@ -1159,7 +1161,7 @@ cdef public class cKDTree [object ckdtree, type ckdtree_type]:
             count_neighbors_weighted(<ckdtree*> self, <ckdtree*> other,
                                     w1p, w2p, w1np, w2np,
                                     n_queries,
-                                    &real_r[0], &results[0], p)
+                                    &real_r[0], &results[0], p, convolve_thresh)
             if r_ndim == 0:
                 return results[0]
             else:
