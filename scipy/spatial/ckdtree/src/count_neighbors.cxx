@@ -121,7 +121,8 @@ traverse(const ckdtree *self, const ckdtree *other,
          const traverse_weights *w,       
          npy_intp start, npy_intp end, npy_float64 *r, ResultType *results,
          const ckdtreenode *node1, const ckdtreenode *node2,
-         RectRectDistanceTracker<MinMaxDist> *tracker)
+         RectRectDistanceTracker<MinMaxDist> *tracker,
+         int use_convolve)
 {
 
     const ckdtreenode *lnode1;
@@ -138,11 +139,44 @@ traverse(const ckdtree *self, const ckdtree *other,
     start = bsearch_first(tracker->min_distance, r, start, end);
     end = bsearch_first(tracker->max_distance, r, start, end);
 
-    for (i=end; i <old_end; ++i) {
-        results[i] += WeightType::get_node_weight(w, node1, node2);
+    ResultType * old_results, *new_results;
+    int old_use_convolve = use_convolve;
+    if (old_use_convolve || (end - start) * (end - start) > node1->children * node2->children) {
+        /* all later levels must use_convolve */
+        /* too many bins, better use non-cummulative traverse, then 'convolve it' */
+        use_convolve = 1;
     }
 
-    if (end - start > 0) {
+    int probe_further;
+
+    old_results = results;
+    if(use_convolve != old_use_convolve) {
+        /* from this level on we swicth to individual bins */
+        new_results = (ResultType*) calloc(sizeof(ResultType), end + 1);
+        results = new_results;
+    }
+
+    if(!old_use_convolve) {
+        /* add the cummulants */
+        for (i=end; i <old_end; ++i) {
+            old_results[i] += WeightType::get_node_weight(w, node1, node2);
+        }
+        /* probe further, covering only remaining bins */
+        probe_further = end - start > 0;
+    } else {
+        /* only if this pair fits into a single bin */
+        if(end - start == 0) {
+            results[start] += WeightType::get_node_weight(w, node1, node2);
+        }
+        //if(end - start == 0 && end != 3000) {
+            /* in this case some of the inner bins must have been wrongly counted */
+         //   abort();
+        //}
+        /* otherwise open the nodes */
+        probe_further = end - start > 0;
+    }
+
+    if (probe_further) {
         /* OK, need to probe a bit deeper */
         if (node1->split_dim == -1) {  /* 1 is leaf node */
             lnode1 = node1;
@@ -190,8 +224,14 @@ traverse(const ckdtree *self, const ckdtree *other,
                          * r's than to generate a distance array, sort it, then
                          * search for all r's via binary search
                          */
-                        for (l=start; l<end; ++l) {
-                            if (d <= r[l]) results[l] += WeightType::get_weight(w, sindices[i], sindices[j]);
+                        if(!use_convolve) {
+                            for (l=start; l<end; ++l) {
+                                if (d <= r[l]) results[l] += WeightType::get_weight(w, sindices[i], sindices[j]);
+                            }
+                        } else {
+                            /* just add one bin, then convolve later. */
+                            l = bsearch_first(d, r, start, end);
+                            results[l] += WeightType::get_weight(w, sindices[i], sindices[j]);   
                         }
                     }
                 }
@@ -199,12 +239,12 @@ traverse(const ckdtree *self, const ckdtree *other,
             else {  /* 1 is a leaf node, 2 is inner node */
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1, node2->less, tracker);
+                    node1, node2->less, tracker, use_convolve);
                 tracker->pop();
 
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1, node2->greater, tracker);
+                    node1, node2->greater, tracker, use_convolve);
                 tracker->pop();
             }
         }
@@ -213,40 +253,49 @@ traverse(const ckdtree *self, const ckdtree *other,
                 /* 1 is an inner node, 2 is a leaf node */
                 tracker->push_less_of(1, node1);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->less, node2, tracker);
+                    node1->less, node2, tracker, use_convolve);
                 tracker->pop();
                 
                 tracker->push_greater_of(1, node1);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->greater, node2, tracker);
+                    node1->greater, node2, tracker, use_convolve);
                 tracker->pop();
             }
             else { /* 1 and 2 are inner nodes */
                 tracker->push_less_of(1, node1);
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->less, node2->less, tracker);
+                    node1->less, node2->less, tracker, use_convolve);
                 tracker->pop();
                     
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->less, node2->greater, tracker);
+                    node1->less, node2->greater, tracker, use_convolve);
                 tracker->pop();
                 tracker->pop();
                     
                 tracker->push_greater_of(1, node1);
                 tracker->push_less_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results, 
-                    node1->greater, node2->less, tracker);
+                    node1->greater, node2->less, tracker, use_convolve);
                 tracker->pop();
                     
                 tracker->push_greater_of(2, node2);
                 traverse<MinMaxDist, WeightType, ResultType>(self, other, w, start, end, r, results,
-                    node1->greater, node2->greater, tracker);
+                    node1->greater, node2->greater, tracker, use_convolve);
                 tracker->pop();
                 tracker->pop();
             }
         }
+    }
+
+    if(use_convolve != old_use_convolve) {
+        for(i = start; i < end; ++i) {
+            for(j = start; j <= i; ++j) {
+                old_results[i] += results[j];
+            }
+        } 
+        free(results);
     }
 }
 
@@ -261,7 +310,7 @@ count_neighbors(const ckdtree *self, const ckdtree *other,
     if(cond) { \
         RectRectDistanceTracker<kls> tracker(self, r1, r2, p, 0.0, 0.0);\
         traverse<kls, WeightType, ResultType>(self, other, w, 0, n_queries, real_r, results, \
-                 self->ctree, other->ctree, &tracker); \
+                 self->ctree, other->ctree, &tracker, 0); \
     } else
 
     /* release the GIL */
